@@ -25,6 +25,7 @@ import { fetchAttestation } from "@/lib/settlement/settleOnChain";
 import { recordPaymentOnChain, checkIsPaid, getContractPayments } from "@/lib/stellar/contract";
 import { fetchContractEvents, buildPaymentEventKey } from "@/lib/stellar/events";
 import { CONTRACT_ID } from "@/lib/utils/constants";
+import { reportError } from "@/lib/observability/reportError";
 import { Money } from "@/lib/money";
 import {
   assetKey,
@@ -129,6 +130,18 @@ export async function reconcileSettlementIntent(
   } catch (err) {
     // If Horizon cannot find the transaction or verification fails
     const message = err instanceof Error ? err.message : "Horizon verification failed.";
+    reportError(
+      "reconciliation.failed",
+      err,
+      {
+        stage: "horizon-verify",
+        intentId: intent.id,
+        txHash: intent.txHash,
+        tripId: intent.tripId,
+      },
+      "warning",
+      intent.requestId,
+    );
     return {
       intentId: intent.id,
       reconciled: false,
@@ -170,6 +183,7 @@ export async function reconcileSettlementIntent(
         if (attested.ok) {
           if (options?.allowActiveSubmission ?? true) {
             const contractRes = await recordPaymentOnChain({
+              requestId: intent.requestId,
               memberPublicKey: intent.memberWallet,
               tripId: intent.tripId,
               expenseId: intent.expenseId,
@@ -182,14 +196,49 @@ export async function reconcileSettlementIntent(
             if (contractRes.success) {
               onChain = true;
               if (contractRes.ledger) ledger = contractRes.ledger;
+            } else {
+              reportError(
+                "reconciliation.contract-recording-failed",
+                new Error(contractRes.error ?? "Contract recording failed during reconciliation"),
+                {
+                  intentId: intent.id,
+                  txHash: intent.txHash,
+                  tripId: intent.tripId,
+                },
+                "warning",
+                intent.requestId,
+              );
             }
           } else {
             needsSignature = true;
           }
+        } else {
+          reportError(
+            "reconciliation.attestation-failed",
+            new Error(attested.message),
+            {
+              intentId: intent.id,
+              txHash: intent.txHash,
+              tripId: intent.tripId,
+            },
+            "warning",
+            intent.requestId,
+          );
         }
       }
-    } catch {
+    } catch (err) {
       // Non-fatal: onChain remains false, but financial reality (Horizon payment) is authoritative
+      reportError(
+        "reconciliation.contract-recording-failed",
+        err,
+        {
+          intentId: intent.id,
+          txHash: intent.txHash,
+          tripId: intent.tripId,
+        },
+        "warning",
+        intent.requestId,
+      );
     }
   }
 
@@ -241,6 +290,18 @@ export async function reconcilePendingIntentsForWallet(
       results.push(result);
     } catch (err) {
       console.warn(`[reconcile] Error reconciling intent ${intent.id}:`, err);
+      reportError(
+        "reconciliation.failed",
+        err,
+        {
+          stage: "reconcilePendingIntentsForWallet",
+          intentId: intent.id,
+          txHash: intent.txHash,
+          tripId: intent.tripId,
+        },
+        "error",
+        intent.requestId,
+      );
     }
   }
 
