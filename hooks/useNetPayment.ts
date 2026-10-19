@@ -24,6 +24,7 @@ import {
   STELLAR_EXPLORER,
   CONTRACT_ID,
   STELLAR_NETWORK,
+  getNetworkConfigErrors,
 } from "@/lib/utils/constants";
 import { reportError } from "@/lib/observability/reportError";
 import { createRequestId } from "@/lib/observability/requestId";
@@ -306,6 +307,22 @@ export function useNetPayment({ tripId }: UseNetPaymentOpts) {
         return;
       }
 
+      // Invariant 1: network configuration must be consistent and safe.
+      const configErrors = getNetworkConfigErrors();
+      if (configErrors.length > 0) {
+        const errorMsg = `Payment blocked: network configuration is invalid (${configErrors[0]})`;
+        setPaymentState({ status: "blocked", message: errorMsg });
+        toastError("Configuration invalid", errorMsg);
+        reportError(
+          "payment.blocked-config-invalid",
+          new Error(errorMsg),
+          { stage: "payNetSettlement", configErrors },
+          "error",
+          requestId,
+        );
+        return;
+      }
+
       // Invariant 2: block signing when the wallet is on a different network
       // than the app (the wallet's network can change mid-session).
       const mismatchMsg = networkMismatchMessage(network);
@@ -566,6 +583,22 @@ export function useNetPayment({ tripId }: UseNetPaymentOpts) {
 
       if (!publicKey) {
         toastError("Wallet not connected", "Please connect your Freighter wallet first.");
+        return;
+      }
+
+      // Invariant 1: network configuration must be consistent and safe.
+      const configErrors = getNetworkConfigErrors();
+      if (configErrors.length > 0) {
+        const errorMsg = `Payment blocked: network configuration is invalid (${configErrors[0]})`;
+        setPaymentState({ status: "blocked", message: errorMsg });
+        toastError("Configuration invalid", errorMsg);
+        reportError(
+          "payment.blocked-config-invalid",
+          new Error(errorMsg),
+          { stage: "payNetPathSettlement", configErrors },
+          "error",
+          requestId,
+        );
         return;
       }
 
