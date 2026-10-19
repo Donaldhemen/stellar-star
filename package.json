@@ -13,6 +13,7 @@
     "lint": "eslint .",
     "test": "jest",
     "test:coverage": "jest --coverage",
+    "test:error-reporting": "node scripts/smoke-error-reporting.js",
     "proof:links": "node scripts/proof-link-check.js",
     "db:check": "node scripts/check-supabase.mjs",
     "db:migrate": "node scripts/migrate.mjs",
