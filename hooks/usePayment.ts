@@ -23,6 +23,7 @@ import {
   STELLAR_EXPLORER,
   CONTRACT_ID,
   STELLAR_NETWORK,
+  getNetworkConfigErrors,
 } from "@/lib/utils/constants";
 import { reportError } from "@/lib/observability/reportError";
 import { createRequestId } from "@/lib/observability/requestId";
@@ -384,6 +385,22 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
       const amountError = validateAmount(share.amount, "XLM");
       if (amountError) {
         toastError("Invalid payment amount", amountError);
+        return;
+      }
+
+      // Invariant 1: network configuration must be consistent and safe.
+      const configErrors = getNetworkConfigErrors();
+      if (configErrors.length > 0) {
+        const errorMsg = `Payment blocked: network configuration is invalid (${configErrors[0]})`;
+        setPaymentState({ status: "blocked", message: errorMsg });
+        toastError("Configuration invalid", errorMsg);
+        reportError(
+          "payment.blocked-config-invalid",
+          new Error(errorMsg),
+          { stage: "payShare", configErrors },
+          "error",
+          requestId,
+        );
         return;
       }
 
