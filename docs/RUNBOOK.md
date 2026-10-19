@@ -88,8 +88,11 @@ After deployment:
 - Ensure workflow files exist and are valid:
   - `.github/workflows/ci.yml`
   - `.github/workflows/production-check.yml`
-- Validate Mainnet Go/No-Go release gate: `npm run gate:check`
-- Assert no E2E wallet bypass in production build: `npm run test:security-build`
+- Validate network configuration:
+  - Development / Testnet validation: `npm run config:validate`
+  - Mandatory production deployment gate: `npm run config:validate -- --production`
+    - Validates selected network, Horizon, Soroban RPC, explorer, contract IDs, asset issuer values, and public app URL without printing secrets.
+    - Rejects testnet endpoints or placeholder contract IDs before production deployment.
 - Confirm CI badge resolves in README.
 - Confirm repo settings enforce checks on PRs (manual GitHub setting).
 
