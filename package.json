@@ -14,6 +14,7 @@
     "test": "jest",
     "test:coverage": "jest --coverage",
     "proof:links": "node scripts/proof-link-check.js",
+    "gate:check": "node scripts/verify-mainnet-gate.js",
     "db:check": "node scripts/check-supabase.mjs",
     "db:migrate": "node scripts/migrate.mjs",
     "db:status": "node scripts/migrate.mjs --status",
