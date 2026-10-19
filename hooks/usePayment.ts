@@ -23,6 +23,7 @@ import {
   STELLAR_EXPLORER,
   CONTRACT_ID,
   STELLAR_NETWORK,
+  getNetworkConfigErrors,
 } from "@/lib/utils/constants";
 import { reportError } from "@/lib/observability/reportError";
 import { createRequestId } from "@/lib/observability/requestId";
@@ -297,6 +298,19 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
     const attested = await fetchAttestation({ ...pendingOnChain, requestId });
 
     if (!attested.ok) {
+      reportError(
+        "payment.attestation-failed",
+        new Error(attested.message),
+        {
+          stage: "retryOnChainRecord",
+          tripId: pendingOnChain.tripId,
+          expenseId: pendingOnChain.expenseId,
+          txHash: pendingOnChain.txHash,
+          retryable: attested.retryable,
+        },
+        "error",
+        requestId,
+      );
       setPaymentState({
         status: "partial_success",
         hash: pendingOnChain.txHash,
@@ -320,6 +334,18 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
 
     if (!contractResult.success) {
       const msg = contractResult.error ?? "On-chain retry failed.";
+      reportError(
+        "payment.contract-recording-failed",
+        new Error(msg),
+        {
+          stage: "retryOnChainRecord",
+          tripId: pendingOnChain.tripId,
+          expenseId: pendingOnChain.expenseId,
+          txHash: pendingOnChain.txHash,
+        },
+        "error",
+        requestId,
+      );
       setPaymentState({
         status: "partial_success",
         hash: pendingOnChain.txHash,
@@ -359,6 +385,22 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
       const amountError = validateAmount(share.amount, "XLM");
       if (amountError) {
         toastError("Invalid payment amount", amountError);
+        return;
+      }
+
+      // Invariant 1: network configuration must be consistent and safe.
+      const configErrors = getNetworkConfigErrors();
+      if (configErrors.length > 0) {
+        const errorMsg = `Payment blocked: network configuration is invalid (${configErrors[0]})`;
+        setPaymentState({ status: "blocked", message: errorMsg });
+        toastError("Configuration invalid", errorMsg);
+        reportError(
+          "payment.blocked-config-invalid",
+          new Error(errorMsg),
+          { stage: "payShare", configErrors },
+          "error",
+          requestId,
+        );
         return;
       }
 
@@ -541,6 +583,19 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
 
           if (!attested.ok) {
             onChainError = attested.message;
+            reportError(
+              "payment.attestation-failed",
+              new Error(attested.message),
+              {
+                stage: "payShare",
+                tripId,
+                expenseId,
+                txHash: result.hash,
+                retryable: attested.retryable,
+              },
+              "error",
+              requestId,
+            );
             buildAndPersistPending(result.hash, result.ledger, payerWalletAddress, share.amount, tripId, memoText);
           } else {
             const contractResult = await recordPaymentOnChain({
@@ -561,6 +616,18 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
               loadPoolBalance();
             } else {
               onChainError = contractResult.error ?? "On-chain recording failed.";
+              reportError(
+                "payment.contract-recording-failed",
+                new Error(onChainError),
+                {
+                  stage: "payShare",
+                  tripId,
+                  expenseId,
+                  txHash: result.hash,
+                },
+                "error",
+                requestId,
+              );
               buildAndPersistPending(result.hash, result.ledger, payerWalletAddress, share.amount, tripId, memoText);
             }
           }

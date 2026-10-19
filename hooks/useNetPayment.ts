@@ -24,6 +24,7 @@ import {
   STELLAR_EXPLORER,
   CONTRACT_ID,
   STELLAR_NETWORK,
+  getNetworkConfigErrors,
 } from "@/lib/utils/constants";
 import { reportError } from "@/lib/observability/reportError";
 import { createRequestId } from "@/lib/observability/requestId";
@@ -249,6 +250,18 @@ export function useNetPayment({ tripId }: UseNetPaymentOpts) {
     );
 
     if (!attested.ok) {
+      reportError(
+        "payment.attestation-failed",
+        new Error(attested.message),
+        {
+          stage: "retryNetSettlement",
+          tripId: pendingNetSettlement.tripId,
+          txHash: pendingNetSettlement.txHash,
+          retryable: attested.retryable,
+        },
+        "error",
+        requestId,
+      );
       setPaymentState({
         status: "partial_success",
         hash: pendingNetSettlement.txHash,
@@ -275,6 +288,17 @@ export function useNetPayment({ tripId }: UseNetPaymentOpts) {
 
     if (!contractResult.success) {
       const msg = contractResult.error ?? "On-chain retry failed.";
+      reportError(
+        "payment.contract-recording-failed",
+        new Error(msg),
+        {
+          stage: "retryNetSettlement",
+          tripId: pendingNetSettlement.tripId,
+          txHash: pendingNetSettlement.txHash,
+        },
+        "error",
+        requestId,
+      );
       setPaymentState({
         status: "partial_success",
         hash: pendingNetSettlement.txHash,
@@ -303,6 +327,22 @@ export function useNetPayment({ tripId }: UseNetPaymentOpts) {
 
       if (!publicKey) {
         toastError("Wallet not connected", "Please connect your Freighter wallet first.");
+        return;
+      }
+
+      // Invariant 1: network configuration must be consistent and safe.
+      const configErrors = getNetworkConfigErrors();
+      if (configErrors.length > 0) {
+        const errorMsg = `Payment blocked: network configuration is invalid (${configErrors[0]})`;
+        setPaymentState({ status: "blocked", message: errorMsg });
+        toastError("Configuration invalid", errorMsg);
+        reportError(
+          "payment.blocked-config-invalid",
+          new Error(errorMsg),
+          { stage: "payNetSettlement", configErrors },
+          "error",
+          requestId,
+        );
         return;
       }
 
@@ -445,6 +485,18 @@ export function useNetPayment({ tripId }: UseNetPaymentOpts) {
 
           if (!attested.ok) {
             onChainError = attested.message;
+            reportError(
+              "payment.attestation-failed",
+              new Error(attested.message),
+              {
+                stage: "payNetSettlement",
+                tripId,
+                txHash: result.hash,
+                retryable: attested.retryable,
+              },
+              "error",
+              requestId,
+            );
             buildAndPersistPending(result.hash, result.ledger, payerWalletAddress, ledgerAmount, mappedDebts, memoText);
           } else {
             const contractResult = await recordNetSettlementOnChain({
@@ -465,6 +517,17 @@ export function useNetPayment({ tripId }: UseNetPaymentOpts) {
               loadPoolBalance();
             } else {
               onChainError = contractResult.error ?? "On-chain recording failed.";
+              reportError(
+                "payment.contract-recording-failed",
+                new Error(onChainError),
+                {
+                  stage: "payNetSettlement",
+                  tripId,
+                  txHash: result.hash,
+                },
+                "error",
+                requestId,
+              );
               buildAndPersistPending(result.hash, result.ledger, payerWalletAddress, ledgerAmount, mappedDebts, memoText);
             }
           }
@@ -566,6 +629,22 @@ export function useNetPayment({ tripId }: UseNetPaymentOpts) {
 
       if (!publicKey) {
         toastError("Wallet not connected", "Please connect your Freighter wallet first.");
+        return;
+      }
+
+      // Invariant 1: network configuration must be consistent and safe.
+      const configErrors = getNetworkConfigErrors();
+      if (configErrors.length > 0) {
+        const errorMsg = `Payment blocked: network configuration is invalid (${configErrors[0]})`;
+        setPaymentState({ status: "blocked", message: errorMsg });
+        toastError("Configuration invalid", errorMsg);
+        reportError(
+          "payment.blocked-config-invalid",
+          new Error(errorMsg),
+          { stage: "payNetPathSettlement", configErrors },
+          "error",
+          requestId,
+        );
         return;
       }
 

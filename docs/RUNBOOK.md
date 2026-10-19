@@ -88,27 +88,35 @@ After deployment:
 - Ensure workflow files exist and are valid:
   - `.github/workflows/ci.yml`
   - `.github/workflows/production-check.yml`
+- Validate network configuration:
+  - Development / Testnet validation: `npm run config:validate`
+  - Mandatory production deployment gate: `npm run config:validate -- --production`
+    - Validates selected network, Horizon, Soroban RPC, explorer, contract IDs, asset issuer values, and public app URL without printing secrets.
+    - Rejects testnet endpoints or placeholder contract IDs before production deployment.
 - Confirm CI badge resolves in README.
 - Confirm repo settings enforce checks on PRs (manual GitHub setting).
 
 ## 6. Release Documentation Pack
 
-Before submission, verify:
+Before submission or mainnet promotion, verify:
 
 - README is up to date
+- `docs/MAINNET_READINESS.md` signed off and Go/No-Go gate evaluated
 - `docs/RELEASE_CHECKLIST.md` current
 - `docs/REQUIREMENT_PROOF_MATRIX.md` current
 - `docs/ARCHITECTURE_AND_LIMITATIONS.md` current
+- `docs/RUNBOOK.md` (specifically Section 9 Release Governance) reviewed
 
 ## 7. Incident / Rollback Basics
 
-If production-like issue occurs:
+If a production or production-like issue occurs:
 
-1. Stop deployment changes.
-2. Re-run lint/test/build and contract tests.
-3. Validate `.env.local` contract ID.
-4. Compare README proof IDs/tx hashes against explorer.
-5. If contract ID is wrong, redeploy and update env + docs consistently.
+1. **Pause immediately**: Exercise pause authority (Section 9.2) to halt active releases or traffic.
+2. Stop deployment changes and freeze configuration.
+3. Re-run lint/test/build and contract tests.
+4. Validate `.env.local` contract ID and network configuration consistency.
+5. Compare README proof IDs/tx hashes against Stellar Expert explorer.
+6. If contract ID is wrong or unrecoverable, follow the formal rollback procedure in Section 9.3.
 
 ## 8. Settlement Pool Credit Model
 
