@@ -165,6 +165,16 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  const upperFrom = from.toUpperCase();
+  const upperTo = to.toUpperCase();
+
+  if (!SUPPORTED_CURRENCIES.has(upperFrom) || !SUPPORTED_CURRENCIES.has(upperTo)) {
+    return jsonError(
+      `Unsupported currency code. Supported: ${Array.from(SUPPORTED_CURRENCIES).join(", ")}`,
+      400,
+    );
+  }
+
   // getRate never throws — it degrades to { unavailable: true }.
   const result = await defaultRateService.getRate(upperFrom, upperTo);
 

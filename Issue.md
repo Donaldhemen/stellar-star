@@ -1,523 +1,747 @@
-# StellarStar GitHub Issues Backlog
+# Stellar-star — sequenced product and engineering backlog
 
-This document contains 40 production-ready GitHub issues identified across the StellarStar codebase, categorized by area (Security, Bug, Performance, Feature, Accessibility, Architecture). Each issue includes a clear title, problem description, affected files, impact analysis, and recommended fix.
+**Purpose.** This is the proposed next-40-issues backlog for Stellar-star. It
+starts with the work needed before real-money use, then improves the current
+expense-sharing experience, and ends with optional product expansions. Issues
+are deliberately sequenced: a later item should not be started before its
+dependencies are complete.
 
----
+**Conventions**
 
-## 1. [Bug] `/api/invitations` routes crash in Node.js runtime by invoking client-only `requireAuthenticatedClient`
-
-### Description
-The server-side invitation API routes fail with a 500 error when handling requests because they invoke invitation helpers without passing a server Supabase client.
-
-In `app/api/invitations/create/route.ts`, `app/api/invitations/claim/route.ts`, and `app/api/invitations/revoke/route.ts`, the endpoints verify the user's wallet session from the `Authorization: Bearer <token>` header, but then call `createTripInvite(...)`, `claimTripInvite(...)`, or `revokeTripInvite(...)` without supplying a `client` parameter:
-
-```ts
-// app/api/invitations/claim/route.ts
-const result = await claimTripInvite(
-  body.token,
-  session.wallet_address,
-  body.selectedMemberId,
-);
-```
-
-In `lib/invitations/claim.ts`, the functions fall back to:
-```ts
-const db = client ?? requireAuthenticatedClient();
-```
-
-`requireAuthenticatedClient()` (from `lib/supabase/client.ts`) accesses `getAccessToken()`, which inspects `window.localStorage`. Because these API routes execute in the Node.js runtime (`export const runtime = "nodejs"`), `window` is `undefined`, causing `getAccessToken()` to return `null` and `requireAuthenticatedClient()` to throw:
-`"Your session has expired. Please sign in with your wallet again."`
-
-### Affected Files
-- `app/api/invitations/create/route.ts`
-- `app/api/invitations/claim/route.ts`
-- `app/api/invitations/revoke/route.ts`
-- `lib/invitations/claim.ts`
-
-### Recommended Fix
-Pass an authenticated server Supabase client created with the verified session token into each helper function:
-```ts
-const serverClient = createServerClientForToken(token);
-const result = await claimTripInvite(
-  body.token,
-  session.wallet_address,
-  body.selectedMemberId,
-  serverClient,
-);
-```
+- **Priority:** P0 blocks safe production use; P1 is a near-term product need;
+  P2 is a planned enhancement; P3 is an optional exploration.
+- **Size:** S (up to 2 days), M (3–5 days), L (1–2 weeks), XL (multi-sprint).
+- **Definition of done:** implementation, relevant unit/integration tests,
+  accessible UI where applicable, updated documentation, and no regression in
+  the existing payment path.
+- Existing capabilities are not duplicated here: wallet authentication,
+  invitations, equal/custom splits, real-time sync, path payments, and
+  attested on-chain settlement are already present.
 
 ---
 
-## 2. [Security] Unauthenticated invitation link verification is blocked by Postgres RLS on `trip_invites` and `trips`
+## Phase 1 — Production safety and operational foundations
 
-### Description
-Prospective members who receive an invite link (e.g. `/join/[token]`) cannot verify or preview the invitation because queries are executed under the anonymous role and blocked by PostgreSQL Row-Level Security (RLS).
+### 001 — Establish a mainnet go/no-go gate
 
-In `app/api/invitations/verify/route.ts`, the route calls `verifyTripInvite(token)`:
-```ts
-// lib/invitations/claim.ts
-export async function verifyTripInvite(token: string, client?: StellarStarClient) {
-  const db = client ?? requireSupabaseClient();
-  const { data: inviteData } = await db.from("trip_invites").select("*").eq("token_hash", tokenHash).maybeSingle();
-  ...
-  const { data: tripData } = await db.from("trips").select("id, name, description, members").eq("id", inviteData.trip_id).single();
-}
-```
+**Priority:** P0 · **Size:** M · **Depends on:** none
 
-However, in `supabase-setup.sql`:
-1. The `trip_invites` table RLS policy `trip_invites_select_members` allows `SELECT` only if:
-   ```sql
-   trip_id IN (SELECT id FROM public.trips WHERE member_wallets @> ARRAY[public.current_wallet()])
-   ```
-2. The `trips` table RLS policy `trips_select_members` similarly requires `member_wallets @> ARRAY[public.current_wallet()]`.
+Create a single, auditable release gate for moving from testnet to public
+network. The current mainnet-readiness document identifies the risks, but the
+decision needs named owners, evidence links, and an explicit approval record.
 
-An unauthenticated visitor visiting the invite URL is not logged in, so `public.current_wallet()` is `null`. Even if logged in, they are not yet a member of the trip. Consequently, RLS blocks both queries and `verifyTripInvite` always throws `"Invalid or unrecognized invitation link."` (404).
+**Acceptance criteria**
 
-### Affected Files
-- `app/api/invitations/verify/route.ts`
-- `lib/invitations/claim.ts`
-- `supabase-setup.sql`
+- `docs/MAINNET_READINESS.md` has a dated checklist for security, finance,
+  support, contracts, monitoring, legal/privacy review, and rollback.
+- Each item has an owner, status, proof link, and an expiry/review date.
+- Production deployment is blocked in CI until required P0 checks pass.
+- The release runbook documents who can approve, pause, and roll back a
+  release.
 
-### Recommended Fix
-Implement a dedicated Postgres RPC function (`public.verify_trip_invite(p_token_hash text)`) marked `SECURITY DEFINER` that validates the token hash and returns only non-sensitive public metadata (`trip_id`, `trip_name`, `unclaimed_members`), or use `createServiceRoleClient()` strictly within `verifyTripInvite` to look up the invite record by token hash.
+### 002 — Validate production configuration in CI and at startup
 
----
+**Priority:** P0 · **Size:** M · **Depends on:** 001
 
-## 3. [Bug] Stale closure in `useExpenseForm` due to missing `currency` and `toastInfo` in `useCallback` dependency array
+Turn network configuration validation into a mandatory deployment control.
+The app already validates many client settings; this issue makes that check
+unavoidable before a public deployment.
 
-### Description
-In `hooks/useExpenseForm.ts`, the `handleSubmit` callback omits `currency` and `toastInfo` from its `useCallback` dependency array.
+**Acceptance criteria**
 
-When a user opens the expense creation form, switches the currency dropdown (for example, from `USD` to `XLM` or `INR`), and submits the form, `handleSubmit` references the initial/stale `currency` value captured when the hook was mounted. As a result, the created expense is saved with the wrong currency.
+- A CI command validates the selected network, Horizon, Soroban RPC, explorer,
+  contract IDs, asset issuer values, and public app URL without printing
+  secrets.
+- CI rejects testnet endpoints or placeholder contract IDs in a production
+  deployment.
+- Startup exposes a clear, non-sensitive diagnostic when configuration is
+  invalid and prevents payment actions.
+- Tests cover valid testnet, valid public network, and cross-network failures.
 
-### Affected Files
-- `hooks/useExpenseForm.ts`
+### 003 — Add durable error monitoring and payment-path alerts
 
-### Recommended Fix
-Include `currency` and `toastInfo` in the `useCallback` dependency array for `handleSubmit` in `hooks/useExpenseForm.ts`:
-```ts
-    [
-      addExpense,
-      currency,
-      description,
-      members,
-      onSuccess,
-      paidByMemberId,
-      splitMode,
-      title,
-      toastError,
-      toastInfo,
-      toastSuccess,
-      totalAmount,
-      validate,
-    ],
-```
+**Priority:** P0 · **Size:** M · **Depends on:** 001
 
----
+Structured client errors are currently routable to a server endpoint. Connect
+that seam to a durable monitoring provider and define alerting for failures
+that may leave a user uncertain whether funds moved.
 
-## 4. [Bug] Stale locale formatting in `usePayment` and `useNetPayment` hooks
+**Acceptance criteria**
 
-### Description
-In both `hooks/usePayment.ts` and `hooks/useNetPayment.ts`, the `depositToPool` function formats user notifications using the active user `locale`:
-```ts
-const { formatted } = formatMoney(amountXlm, "XLM", locale);
-toastSuccess("Deposit successful", `Deposited ${formatted} into pool.`);
-```
-However, `locale` is omitted from the dependency array of `depositToPool`:
-```ts
-[publicKey, loadPoolBalance, toastError, toastSuccess]
-```
-If the user switches their preferred locale or language, `depositToPool` remains bound to the stale locale.
+- Capture payment submission, attestation, contract-recording, and
+  reconciliation failures with a correlation ID and no secret/XDR payload.
+- Alert an on-call channel for repeated failures, a spike in partial success,
+  and unavailable critical services.
+- Provide a runbook for investigating an alert from correlation ID to Stellar
+  transaction and database record.
+- Add a test or smoke check that verifies the reporter receives a redacted
+  event.
 
-### Affected Files
-- `hooks/usePayment.ts`
-- `hooks/useNetPayment.ts`
+### 004 — Back up Supabase data and rehearse recovery
 
-### Recommended Fix
-Add `locale` to the dependency array of `depositToPool` in both `hooks/usePayment.ts` and `hooks/useNetPayment.ts`.
+**Priority:** P0 · **Size:** L · **Depends on:** 001
 
----
+Expenses, memberships, invitations, session-related records, and settlement
+intent state need a recovery story even though transfers are independently
+verifiable on Stellar.
 
-## 5. [Bug] `InviteMemberModal` selection desynchronization with `unclaimedMembers`
+**Acceptance criteria**
 
-### Description
-In `components/trips/InviteMemberModal.tsx`, `useEffect` resets state and selects the first unclaimed member:
-```ts
-const unclaimedMembers = (trip.members || []).filter(
-  (m) => !m.walletAddress || m.walletAddress.trim() === "",
-);
+- Automated, encrypted database backups have documented retention and access
+  controls.
+- Migration files, storage policies, and environment configuration can rebuild
+  a clean staging environment.
+- A restore drill proves that a sampled trip, expense history, invitation, and
+  settlement intent recover correctly.
+- The runbook defines recovery point/time objectives and a customer-facing
+  incident communication template.
 
-useEffect(() => {
-  if (isOpen) {
-    setGeneratedUrl("");
-    setCopied(false);
-    setShowQR(false);
-    if (unclaimedMembers.length > 0) {
-      setSelectedMemberId(unclaimedMembers[0].id);
-    } else {
-      setSelectedMemberId("");
-    }
-  }
-}, [isOpen, trip.members]);
-```
+### 005 — Commission a security review and resolve findings
 
-The dependency array specifies `trip.members` instead of `unclaimedMembers`. If another member claims a slot in real time via Supabase Realtime while the modal is open, or if members are modified without altering the array reference, `selectedMemberId` points to a member that is already claimed or invalid.
+**Priority:** P0 · **Size:** XL · **Depends on:** 001–004
 
-### Affected Files
-- `components/trips/InviteMemberModal.tsx`
+Perform an independent review of the Next.js API routes, Supabase RLS policies,
+wallet authentication, settlement oracle, Soroban contracts, and deployment
+configuration. This is not a substitute for automated tests.
 
-### Recommended Fix
-Include `unclaimedMembers` in the `useEffect` dependencies, or memoize `unclaimedMembers` with `useMemo` based on `trip.members` and include it in the hook dependency array.
+**Acceptance criteria**
 
----
+- Scope, threat model, reviewer, findings, severity, and remediation status
+  are recorded privately or in a suitably redacted security report.
+- P0/P1 findings are fixed and regression-tested before mainnet approval.
+- A responsible-disclosure policy and security contact are published.
+- Contract source, deployed WASM hash, and deployed contract IDs are verified
+  and recorded for release.
 
-## 6. [Security] Unbounded public `/api/error-report` endpoint vulnerable to log injection and webhook abuse
+### 006 — Define privacy, retention, and account-deletion behavior
 
-### Description
-The error reporting sink at `app/api/error-report/route.ts` is an unauthenticated POST route intended to ingest client money-path failures.
+**Priority:** P0 · **Size:** L · **Depends on:** 001
 
-However:
-1. It has no rate limiting (neither per-IP nor per-wallet).
-2. It has no request body size limit, allowing arbitrarily large payloads.
-3. If `process.env.ERROR_REPORTING_WEBHOOK` is configured, it forwards incoming payloads with an unbounded `fetch()` call lacking an `AbortSignal.timeout(...)`.
+Wallet addresses are public on-chain, while names, trip descriptions, receipts,
+and invitation data are application data. Users need an accurate explanation
+and a way to remove data that can legally and technically be removed.
 
-A malicious client could spam this endpoint to flood server stdout logs, trigger memory exhaustion, or abuse upstream incident webhooks (e.g. Discord or Slack).
+**Acceptance criteria**
 
-### Affected Files
-- `app/api/error-report/route.ts`
+- Publish a privacy notice that distinguishes immutable public-chain records
+  from mutable application data.
+- Define retention for accounts, audit logs, invitations, receipts, analytics,
+  and backups.
+- Implement an authenticated export/delete request flow; deletion removes or
+  anonymizes off-chain personal data without pretending chain records vanish.
+- Verify that deleted accounts cannot access data through stale sessions,
+  realtime subscriptions, or storage URLs.
 
-### Recommended Fix
-1. Add IP rate limiting using `checkRateLimit` (e.g., max 10 reports per minute per IP).
-2. Enforce max character lengths on incoming `message`, `stack`, and `context`.
-3. Add a timeout to the webhook fetch call using `AbortSignal.timeout(5000)`.
+### 007 — Strengthen authorization tests for every data boundary
 
----
+**Priority:** P0 · **Size:** L · **Depends on:** 004
 
-## 7. [Performance] `/api/fx/rate` lacks currency whitelist and rate limiting, allowing cache-busting DoS on FX providers
+Make trip and expense authorization provable at the database and API layers,
+not just in UI guards. In particular, test creator, member, invitee, revoked
+member, and unrelated-wallet scenarios.
 
-### Description
-In `app/api/fx/rate/route.ts`, query parameters `from` and `to` are validated using a generic regular expression:
-```ts
-function isValidCurrencyCode(code: unknown): code is string {
-  return typeof code === "string" && /^[A-Za-z]{2,6}$/.test(code);
-}
-```
+**Acceptance criteria**
 
-There is no whitelist of supported fiat or crypto currencies (e.g., `USD`, `EUR`, `GBP`, `XLM`, `USDC`, `INR`), and no rate limiting per client IP. An attacker or malfunctioning client making repeated requests with random permutations (e.g. `?from=AAAA&to=BBBB`) will miss the in-memory cache every time. This forces `RateService` to make upstream requests to CoinGecko and ExchangeRate-API, rapidly depleting upstream API quotas and tripping circuit breakers for all users.
+- Maintain an authorization matrix covering read, create, edit, delete,
+  invite, claim, and settlement-intent actions.
+- Add automated Supabase/RLS and route tests for both allowed and denied cases.
+- Realtime subscriptions only expose rows visible to the authenticated wallet.
+- All privileged service-role use is server-only and documented.
 
-### Affected Files
-- `app/api/fx/rate/route.ts`
-- `lib/fx/rateService.ts`
+### 008 — Introduce idempotency keys for money-adjacent mutations
 
-### Recommended Fix
-1. Define a strict whitelist of supported currency codes (`SUPPORTED_CURRENCIES`).
-2. Add rate limiting (e.g. 60 requests per minute per IP) using `checkRateLimit`.
-3. Reject unsupported currencies with HTTP 400 before querying upstream providers.
+**Priority:** P0 · **Size:** L · **Depends on:** 007
 
----
+Networks retry. A repeated click, browser reload, or API retry must not create
+duplicate invitations, expenses, settlement intents, or notifications.
 
-## 8. [Bug] `lib/stellar/contract.ts` `loadAccount` throws `ReferenceError: fetch is not defined` in Node/Jest environments
+**Acceptance criteria**
 
-### Description
-In `lib/stellar/contract.ts`, the `loadAccount` helper calls global `fetch` directly with custom cache headers:
-```ts
-async function loadAccount(publicKey: string, fallbackSequence?: string): Promise<Account> {
-  const res = await fetch(
-    `${HORIZON_URL}/accounts/${publicKey}?_ts=${Date.now()}`,
-    { cache: "no-store", headers: { "Cache-Control": "no-cache" } }
-  );
-  ...
-}
-```
+- Mutating API routes accept an idempotency key tied to the authenticated
+  wallet and request fingerprint.
+- A duplicate request returns the first successful result rather than creating
+  new records.
+- Conflicting reuse of a key is rejected with a useful error.
+- Database uniqueness constraints and tests cover concurrent duplicates.
 
-When invoked inside Node.js test environments or server contexts that do not polyfill global `fetch` on older Node versions or custom Jest jsdom runners, tests throw:
-`ReferenceError: fetch is not defined at loadAccount (lib/stellar/contract.ts:116:15)`
+### 009 — Build an automated on-chain reconciliation worker
 
-In addition, direct fetch bypasses the retry and timeout logic provided by the Stellar SDK `Server` instance.
+**Priority:** P0 · **Size:** XL · **Depends on:** 003, 008
 
-### Affected Files
-- `lib/stellar/contract.ts`
+Move reconciliation beyond a user’s open browser tab. A server-side worker
+should verify pending payments and resolve the states “not submitted,”
+“submitted but not confirmed,” “confirmed but not recorded,” and “recorded.”
 
-### Recommended Fix
-Use the initialized `server.loadAccount(publicKey)` from `lib/stellar/client.ts` or wrap `fetch` with an environment-safe check and proper error handling.
+**Acceptance criteria**
+
+- A durable queue or scheduled worker polls only the required accounts and
+  transaction hashes with backoff and rate limits.
+- It verifies destination, asset, amount, memo/intent, and ledger result before
+  changing settlement state.
+- It never marks an ambiguous payment paid; ambiguous records are escalated for
+  review.
+- Operators have a dashboard or queryable report of pending and failed
+  reconciliations, with alert thresholds.
+
+### 010 — Create an incident-response and support console
+
+**Priority:** P1 · **Size:** L · **Depends on:** 003, 009
+
+When a payment fails or is delayed, support needs one read-only view of the
+expense, settlement intent, transaction hash, contract event, and timeline.
+
+**Acceptance criteria**
+
+- Authorized staff can search by transaction hash, wallet, trip ID, expense ID,
+  or correlation ID.
+- The console shows a redacted timeline and links to the correct network
+  explorer without exposing secrets or editing financial state by default.
+- Every staff lookup is audit logged.
+- A documented, dual-control procedure exists for exceptional corrective
+  actions.
 
 ---
 
-## 9. [Bug] Multi-operation transaction failures display misleading generic error in `submitSignedTransaction`
+## Phase 2 — Complete the expense-sharing experience
 
-### Description
-In `lib/stellar/submitTransaction.ts`, error handling parses Horizon error responses by checking only the first operation:
-```ts
-if (extras?.result_codes) {
-  const { transaction, operations } = extras.result_codes;
-  const opCode = operations?.[0];
-  if (opCode && opCode !== "op_success") throw new Error(friendlyOpError(opCode));
-  if (transaction === "tx_bad_seq") throw new Error("Transaction sequence mismatch. Please try again.");
-  if (transaction === "tx_insufficient_fee") throw new Error("Transaction fee too low. Please try again.");
-  if (transaction !== "tx_success") throw new Error(`Transaction failed: ${transaction}`);
-}
-```
+### 011 — Add safe expense editing with version conflict resolution
 
-If a transaction contains multiple operations (for instance, a fee payment or trustline setup followed by a payment) and operation 0 succeeds while operation 1 fails, `opCode` is `"op_success"`. The check passes, and the function falls through to throw:
-`Transaction failed: tx_failed`
-The user is left with a generic error instead of learning that operation 1 failed (e.g. `op_underfunded` or `op_no_destination`).
+**Priority:** P1 · **Size:** L · **Depends on:** 007, 008
 
-### Affected Files
-- `lib/stellar/submitTransaction.ts`
+Users need to correct titles, amounts, payer, members, and split values before
+settlement. Existing version/conflict infrastructure should become a visible,
+safe workflow rather than silently overwriting another member’s changes.
 
-### Recommended Fix
-Find the first non-successful operation code in `operations`:
-```ts
-const failedOp = operations?.find((op) => op !== "op_success");
-if (failedOp) throw new Error(friendlyOpError(failedOp));
-```
+**Acceptance criteria**
 
----
+- Only authorized trip members can edit an unsettled expense.
+- The editor displays the latest version and offers a clear reload/merge choice
+  when a concurrent change is detected.
+- Editing recomputes shares using exact money arithmetic and blocks an invalid
+  total.
+- Settled or partially settled amounts cannot be changed in place; see issue
+  012 for the corrective flow.
 
-## 10. [Refactor] Client bundle imports Node.js `crypto` module via `lib/invitations/tokens.ts` re-export
+### 012 — Add reversals and corrections instead of destructive edits
 
-### Description
-`lib/invitations/tokens.ts` imports Node's built-in `crypto` module:
-```ts
-import crypto from "crypto";
-```
-This file is re-exported by `lib/supabase/queries.ts`:
-```ts
-export { generateInviteToken, hashToken, buildInviteUrl } from "@/lib/invitations/tokens";
-```
+**Priority:** P1 · **Size:** L · **Depends on:** 011
 
-Because `queries.ts` is imported widely across client React components and contexts (`TripContext`, `AuthContext`), Node's `crypto` module is dragged into the client Webpack bundle, causing build warnings and potential browser runtime incompatibilities.
+Financial history should remain understandable after a mistake. Replace the
+temptation to mutate or delete settled data with linked correction records.
 
-### Affected Files
-- `lib/invitations/tokens.ts`
-- `lib/supabase/queries.ts`
+**Acceptance criteria**
 
-### Recommended Fix
-Separate browser-safe token generation (using `window.crypto.getRandomValues` and Web Crypto `crypto.subtle.digest`) from server-only token hashing, or avoid re-exporting `tokens.ts` from client-facing `queries.ts`.
+- A user can void an unsettled expense with an audit reason.
+- A settled expense can be corrected only through a linked adjustment/offset
+  that preserves the original amount and on-chain proof.
+- Trip and settlement views show the effective balance and a readable history.
+- Permission, arithmetic, and repeated-correction edge cases are tested.
 
----
+### 013 — Add categories, tags, search, and filterable history
 
-## 11. [Feature] Implement silent session renewal / refresh token mechanism for wallet sessions
+**Priority:** P1 · **Size:** M · **Depends on:** 011
 
-### Description
-Wallet JWT session tokens issued by `/api/auth/verify` have a fixed lifetime of 24 hours (`SESSION_TTL_SECONDS = 24 * 60 * 60`).
+As a trip grows, a chronological list becomes hard to use. Add lightweight
+organization without changing the financial model.
 
-In `lib/supabase/session.ts`, when `exp` passes:
-```ts
-if (current && isExpired(current.claims)) {
-  clearSession();
-  return null;
-}
-```
-Any subsequent request fails immediately with `"Your session has expired. Please sign in with your wallet again."`. There is no silent renewal endpoint, sliding window, or refresh mechanism. If a user is in the middle of splitting a trip or executing a transaction after 24 hours, their session is abruptly terminated without an opportunity to seamlessly re-authenticate.
+**Acceptance criteria**
 
-### Affected Files
-- `lib/supabase/serverAuth.ts`
-- `lib/supabase/session.ts`
-- `context/AuthContext.tsx`
+- Expenses support a category and zero or more normalized tags.
+- History is searchable by title, description, member, tag, and transaction
+  hash, and filterable by date, category, payer, settlement state, and asset.
+- Filtering is server-side/paginated for large trips and preserves URL state.
+- Keyboard and screen-reader users can operate all search/filter controls.
 
-### Recommended Fix
-Add a session refresh endpoint (`POST /api/auth/refresh`) that validates an unexpired session token and issues an extended session token if requested within an expiry skew window (e.g. within 1 hour of expiration).
+### 014 — Support receipt attachments with secure storage
 
----
+**Priority:** P1 · **Size:** L · **Depends on:** 006, 007
 
-## 12. [Bug] Potential over-allocation race condition in in-memory `attestationLedger`
+Let a payer attach a bill, invoice, or receipt to an expense while keeping
+private files out of the public repository and public blockchain.
 
-### Description
-When running locally or on deployments without Supabase service credentials, `lib/settlement/attestationLedger.ts` uses an in-memory `Map` (`memoryLedger`).
+**Acceptance criteria**
 
-The check for remaining capacity and the commit are separated into two functions:
-1. `inspectAllocation(txHash, expenseId, member)`
-2. `commitAttestation(entry)`
+- Upload accepts an allowlisted file type, enforces size limits, and scans or
+  quarantines unsafe content according to the chosen provider.
+- Files are stored privately and accessed by short-lived signed URLs only after
+  membership authorization.
+- Metadata includes uploader, timestamp, checksum, and optional caption; it is
+  removable under the retention policy.
+- Mobile upload, access denial, and expired-link cases are tested.
 
-In `app/api/settlement/attest/route.ts`:
-```ts
-const allocation = await inspectAllocation(normalisedTxHash, expenseId, member);
-const remaining = payment.amountStroops - allocation.allocatedStroops;
-if (claimedAmount > remaining) return jsonError(...);
-...
-await commitAttestation(...);
-```
+### 015 — Add recurring expenses and scheduled drafts
 
-Two concurrent requests for two different expenses against the same payment transaction can both run `inspectAllocation` before either has called `commitAttestation`. Both requests see the full transaction amount available and succeed, causing total attested claims to exceed the underlying transaction amount.
+**Priority:** P1 · **Size:** L · **Depends on:** 008, 011
 
-### Affected Files
-- `lib/settlement/attestationLedger.ts`
-- `app/api/settlement/attest/route.ts`
+Rent, utilities, and subscriptions repeat. Create recurring templates that
+generate reviewable drafts, never unexpected blockchain transactions.
 
-### Recommended Fix
-Implement an atomic `allocateAndCommit` method or a mutex/lock around memory ledger allocations so that verification and commitment happen atomically.
+**Acceptance criteria**
 
----
+- A template defines cadence, start/end dates, members, split, amount rule,
+  category, and reminder preference.
+- A scheduled job creates one idempotent draft per occurrence and records its
+  source template.
+- Users can pause, resume, skip, and edit future occurrences without changing
+  history.
+- Generated expenses require normal review/save; no wallet signature is
+  requested automatically.
 
-## 13. [Performance] Excessive component re-rendering triggered by unstable `updateExpense` in `ExpenseContext`
+### 016 — Add trip budgets and spending alerts
 
-### Description
-In `context/ExpenseContext.tsx`, `updateExpense` is defined as:
-```ts
-const updateExpense = useCallback(
-  async (id: string, updates: Partial<Expense>) => {
-    const baseExpense = expenses.find((e) => e.id === id);
-    const saved = await updateExpenseRow(id, updates, baseExpense);
-    mutate((previous) => previous.map((e) => (e.id === id ? saved : e)));
-  },
-  [expenses, mutate]
-);
-```
+**Priority:** P1 · **Size:** M · **Depends on:** 013, 015
 
-Because `expenses` is included in the dependency array, `updateExpense` creates a new function reference every time any expense in the collection is added, updated, or removed. This cascades into `useMemo` for `ExpenseContextType`, causing all consuming components (e.g. `ExpenseList`, `ExpenseRow`, `TripDetailHeader`) to re-render needlessly.
+Give groups a way to set a total and per-category budget, then see spending
+against it in the chosen display currency.
 
-### Affected Files
-- `context/ExpenseContext.tsx`
+**Acceptance criteria**
 
-### Recommended Fix
-Use a functional state lookup or an `expensesRef` to locate `baseExpense` inside `updateExpense`, removing `expenses` from the dependency array.
+- A trip supports an optional budget, category caps, currency, and alert
+  thresholds.
+- The dashboard reports committed, pending, and remaining spend without mixing
+  settlement assets incorrectly.
+- Alerts fire once per threshold crossing and can be muted per member.
+- The UI explains when FX conversion makes totals approximate.
 
----
+### 017 — Create trip templates and duplicate-from-history
 
-## 14. [Feature] Expand SEP-0007 QR payment generator to support non-native assets and validate destination
+**Priority:** P2 · **Size:** M · **Depends on:** 015
 
-### Description
-In `lib/qr/generator.ts`, `buildQRPaymentURI` currently assumes all payments are native XLM:
-```ts
-export function buildQRPaymentURI({ destination, amount, memo }: QRPaymentData): string {
-  const params = new URLSearchParams({
-    destination,
-    amount,
-  });
-  if (memo) {
-    const finalMemo = trimToMemoBytes(memo, 28);
-    params.set("memo", finalMemo);
-    params.set("memo_type", "MEMO_TEXT");
-  }
-  return `web+stellar:pay?${params.toString()}`;
-}
-```
+Repeated groups—flatmates, teams, annual trips—should not require recreating
+members, rules, and common expenses from scratch.
 
-1. `destination` is not validated as a valid Stellar public key (`StrKey.isValidEd25519PublicKey`), allowing malformed QR codes.
-2. The SEP-0007 standard supports non-native assets via `asset_code` and `asset_issuer` query parameters. The current implementation cannot generate QR codes for USDC or other anchored settlement tokens.
+**Acceptance criteria**
 
-### Affected Files
-- `lib/qr/generator.ts`
+- Users can save a trip structure as a reusable template without copying past
+  balances or historic payments.
+- New trips can start from a template or an existing trip, with a preview of
+  what will be copied.
+- Names, dates, members, recurring rules, and permissions are editable before
+  creation.
+- Copy operations are idempotent and audited.
 
-### Recommended Fix
-1. Validate `destination` using `StrKey.isValidEd25519PublicKey(destination)`.
-2. Add optional `assetCode` and `assetIssuer` properties to `QRPaymentData` and append `asset_code` and `asset_issuer` to query parameters when present.
+### 018 — Build a reusable contacts and member-profile layer
 
----
+**Priority:** P2 · **Size:** L · **Depends on:** 006, 007
 
-## 15. [UX] Background settlement reconciliation prompts unexpected wallet signature dialogs
+Avoid repeatedly entering names and wallet addresses while respecting the fact
+that a wallet can change and some members may not yet have a wallet.
 
-### Description
-When `reconcilePendingIntentsForWallet` runs on page load to detect unconfirmed payments, it calls `reconcileSettlementIntent`:
-```ts
-// lib/settlement/reconcile.ts
-if (CONTRACT_ID && !onChain && intent.tripId) {
-  const contractRes = await recordPaymentOnChain({ ... });
-}
-```
+**Acceptance criteria**
 
-`recordPaymentOnChain` prompts Freighter/wallet extension to sign a Soroban contract transaction via `signXDR`. If a user previously paid on Horizon but closed their browser before the Soroban write, reloading the page triggers an unsolicited Freighter wallet popup with no explanatory context in the UI.
+- Users can maintain private contacts with a display name, optional verified
+  wallet, and optional invite destination.
+- A wallet owner can prove and claim their profile; unverified names never
+  imply ownership of a wallet.
+- Address changes retain historic payment attribution and notify affected
+  active groups before use.
+- Duplicate detection is based on canonical wallet address, not display name.
 
-### Affected Files
-- `lib/settlement/reconcile.ts`
-- `hooks/usePayment.ts`
+### 019 — Improve multi-currency entry and FX provenance
 
-### Recommended Fix
-Reconciliation should differentiate between read-only status checks and active transaction submissions. If a transaction requires user signing, flag the intent as `NEEDS_ON_CHAIN_SIGNATURE` and show a "Complete On-Chain Record" banner in the UI rather than automatically opening the wallet extension.
+**Priority:** P1 · **Size:** L · **Depends on:** 016
+
+The app records a quote when a fiat value is converted, but users need to see
+and control that choice. Make display currency, locked quote, and settlement
+asset explicit at expense creation and review.
+
+**Acceptance criteria**
+
+- The form clearly distinguishes entered currency, quote source/time, converted
+  settlement amount, and Stellar settlement asset.
+- Users can refresh a quote before saving; once saved, the original quote is
+  immutable and visible in the expense history.
+- Degraded/expired quote states block accidental conversion but still permit
+  direct settlement-asset entry.
+- Tests cover rounding, stale quotes, provider disagreement, and no conversion
+  for native asset input.
+
+### 020 — Deliver CSV/PDF export and a portable trip archive
+
+**Priority:** P1 · **Size:** M · **Depends on:** 006, 012, 013
+
+Users should be able to take their records with them for reimbursement,
+accounting, or personal records.
+
+**Acceptance criteria**
+
+- CSV export includes expenses, shares, adjustments, categories, exchange-rate
+  provenance, settlement asset, and transaction hash.
+- A print-friendly PDF summary includes balances, receipts links when allowed,
+  and explorer links.
+- An archive export is scoped to the requesting user’s authorized trips and is
+  rate-limited/audited.
+- Amounts preserve precision and never coerce into floating-point notation.
 
 ---
 
-## 16. [Security] Address critical and high-severity npm audit vulnerabilities in project dependencies
+## Phase 3 — Settlement, wallets, and blockchain capabilities
 
-### Description
-Running `npm audit` reveals 15 vulnerabilities (1 critical, 11 high, 1 moderate, 2 low):
-- **Next.js** (<= 15.5.15): Multiple high and critical vulnerabilities regarding App Router SSRF, cache poisoning, and denial of service via connection exhaustion (GHSA-8h8q-6873-q5fj, GHSA-26hh-7cqf-hhc6, GHSA-3g8h-86w9-wvmq).
-- **PostCSS** (<= 8.5.22): Arbitrary file read and XSS via unescaped output (GHSA-qx2v-qp2m-jg93, GHSA-6g55-p6wh-862q).
-- **toml**: Uncontrolled recursion and prototype pollution (GHSA-82x6-q7mm-w9cf, GHSA-v5mp-jgw5-2x6j).
-- **ws**: Memory exhaustion DoS and uninitialized memory disclosure (GHSA-96hv-2xvq-fx4p).
+### 021 — Support partial and installment payments per share
 
-### Affected Files
-- `package.json`
-- `package-lock.json`
+**Priority:** P1 · **Size:** XL · **Depends on:** 008, 009, 012
 
-### Recommended Fix
-Upgrade `next`, `postcss`, and relevant devDependencies to patched versions, and execute `npm audit fix`.
+One payment per share is too rigid for real groups. Allow a member to settle a
+share over multiple on-chain payments while preserving exact remaining balance.
+
+**Acceptance criteria**
+
+- Shares have `owed`, `paid`, and `remaining` amounts in integer stroops/base
+  units; an overpayment is rejected or requires an explicit credit flow.
+- Each installment is independently verified and linked to its transaction and
+  attestation.
+- Net settlement never counts partial amounts as fully settled.
+- Concurrent installment attempts and retry-after-submit behavior are covered
+  by integration tests.
+
+### 022 — Add reminder and payment-request delivery
+
+**Priority:** P1 · **Size:** L · **Depends on:** 015, 021
+
+Let a payer politely request a due amount through an in-app notification and
+an opted-in external channel without leaking a trip’s details in a public URL.
+
+**Acceptance criteria**
+
+- Members can receive in-app reminders; email/push is opt-in and rate-limited.
+- A payment request deep link identifies the recipient and requested share but
+  requires authentication before showing private context.
+- Reminder history records sender, time, state, and unsubscribe/mute choices.
+- No reminder sends automatically without a user-configured schedule or action.
+
+### 023 — Add QR and link payment requests for outstanding balances
+
+**Priority:** P1 · **Size:** M · **Depends on:** 021, 022
+
+Extend the existing SEP-0007 QR capability to generate a clear payment request
+for a particular outstanding share or net settlement.
+
+**Acceptance criteria**
+
+- The QR/link includes destination, canonical asset, exact amount, safe memo or
+  intent reference, expiry, and network context.
+- The recipient sees a human-readable preview before their wallet signs.
+- Expired, already-paid, and mismatched-network requests cannot be submitted.
+- The request works with supported wallets and has a copyable fallback URI.
+
+### 024 — Introduce settlement proposals and member confirmation
+
+**Priority:** P2 · **Size:** L · **Depends on:** 021
+
+For larger groups, present a frozen “proposed settlement” snapshot before
+payments begin, so members agree which expenses and balances are included.
+
+**Acceptance criteria**
+
+- A proposal captures included expense versions, balances, asset(s), creator,
+  expiry, and a deterministic content hash.
+- Members can approve, reject with a reason, or request an edit; approval is
+  invalidated by a material change.
+- Paying from a proposal shows the snapshot reference in the UI and memo where
+  feasible.
+- Expired/revoked proposals cannot authorize a new payment.
+
+### 025 — Add a dispute workflow with evidence and pause controls
+
+**Priority:** P1 · **Size:** XL · **Depends on:** 012, 014, 024
+
+Disagreement is a product state, not merely a support ticket. Give members a
+non-custodial way to flag an item, attach evidence, and prevent accidental
+inclusion in a fresh settlement proposal.
+
+**Acceptance criteria**
+
+- A member can open a dispute against an authorized expense/share with a
+  category, comment, and permitted evidence.
+- Disputed amounts are visibly excluded or flagged in settlement calculations;
+  previously confirmed on-chain payments remain factual and immutable.
+- Resolution requires recorded action/reason and restores eligibility only when
+  appropriate.
+- Abuse controls, privacy controls, and notification rules are documented.
+
+### 026 — Provide wallet capability detection and safer fallback UX
+
+**Priority:** P1 · **Size:** M · **Depends on:** 002
+
+Wallet extensions differ in supported networks, signing APIs, QR handling, and
+path-payment behavior. Detect capability before a user reaches a failing
+signature dialog.
+
+**Acceptance criteria**
+
+- The connection screen shows supported wallets and the capabilities detected
+  for the selected network.
+- Unsupported actions offer a compatible wallet, QR/deep-link, or copy-XDR
+  fallback rather than a generic failure.
+- The app rechecks network and active address immediately before signing.
+- A test matrix covers each supported wallet adapter and no-wallet mode.
+
+### 027 — Finish multi-asset settlement-contract support
+
+**Priority:** P1 · **Size:** XL · **Depends on:** 005, 009, 021
+
+The pool is asset-aware, while the settlement contract still pins one
+settlement asset. Extend the attestation and contract model only after a
+security review and migration plan, so an expense can settle safely in approved
+assets.
+
+**Acceptance criteria**
+
+- The contract cryptographically binds the canonical asset (code and issuer or
+  native) to every claim and prevents cross-asset withdrawal.
+- Asset allowlists, issuer verification, decimal precision, and trustline
+  prerequisites are enforced end-to-end.
+- Existing records remain readable and migration/redeployment is documented.
+- Contract, oracle, UI, and reconciliation tests include same-expense,
+  multi-asset and malicious-issuer cases.
+
+### 028 — Add a balance, trustline, and asset-readiness screen
+
+**Priority:** P1 · **Size:** M · **Depends on:** 026, 027
+
+Before a member tries to pay, show whether their selected wallet has the
+required balance, trustline, authorization, reserve, and supported asset.
+
+**Acceptance criteria**
+
+- The screen reports spendable balance, required amount plus fee estimate,
+  trustline state, and issuer authorization in plain language.
+- Users can build and sign an explicit trustline transaction where supported;
+  nothing is created silently.
+- The flow surfaces sponsored-account reserve constraints and network mismatch.
+- Errors map to actionable remediation, not raw Horizon/Soroban messages.
+
+### 029 — Harden path-payment quotes and price-impact disclosure
+
+**Priority:** P1 · **Size:** L · **Depends on:** 019, 026
+
+Path payments are valuable, but users need a clearer basis for conversion cost
+and expiry than a single route comparison.
+
+**Acceptance criteria**
+
+- Show source amount, destination amount, route, network fee, quote expiry,
+  slippage limit, and an independent reference-rate comparison when available.
+- Require explicit confirmation when price impact exceeds a configurable
+  threshold or reference data is unavailable.
+- Re-quote immediately before signing if the original quote is stale.
+- Record quote metadata with the intent for support/reconciliation; never
+  misrepresent an estimate as a guaranteed price.
+
+### 030 — Replace the single settlement oracle key with threshold control
+
+**Priority:** P1 · **Size:** XL · **Depends on:** 005, 027
+
+The current attestation model intentionally leaves one oracle key as a trust
+concentration. Design and implement an M-of-N attestation scheme with safe key
+rotation and failure handling.
+
+**Acceptance criteria**
+
+- Contract verification accepts a quorum of distinct valid signatures over the
+  complete, domain-separated claim.
+- Signers use independent custody/availability domains; no client receives a
+  signing secret.
+- Add/remove/rotate signer changes use a documented governance and recovery
+  procedure with overlap between old and new quorums.
+- Tests cover duplicate signers, insufficient quorum, expired signatures,
+  replay, compromised-key removal, and signer outage.
 
 ---
 
-## 17. [Database] Schema discrepancies between `supabase-setup.sql` and `migrations/` files
+## Phase 4 — Quality, accessibility, and platform scale
 
-### Description
-There is schema drift between `supabase-setup.sql` (the one-shot setup script) and `migrations/0003_reconcile_drifted_schema.sql`.
+### 031 — Turn Stellar-star into an installable offline-aware PWA
 
-Specifically:
-- Parameter names and defaults in `claim_trip_invite` and `record_auth_challenge`.
-- RLS policy naming and trigger definitions on `trip_invites`.
+**Priority:** P2 · **Size:** L · **Depends on:** 008, 009
 
-A developer setting up a new local Supabase database using `supabase-setup.sql` ends up with a database state that triggers warnings when running `npm run db:status` or `npm run db:migrate`.
+Members often add expenses while travelling with poor connectivity. Support
+safe offline viewing and queued non-financial drafts while preserving online
+verification for money movement.
 
-### Affected Files
-- `supabase-setup.sql`
-- `migrations/0003_reconcile_drifted_schema.sql`
-- `scripts/migrate.mjs`
+**Acceptance criteria**
 
-### Recommended Fix
-Align `supabase-setup.sql` with the latest migration files and verify that `npm run db:status` reports a clean synchronization status.
+- The app is installable and has an offline shell with a clear last-synced
+  indicator.
+- Read-only cached data is scoped to the authenticated wallet and is cleared on
+  sign-out/wallet switch.
+- Expense drafts can queue with idempotency keys and display conflict status on
+  reconnect.
+- Signing, payment submission, and authoritative settlement recording remain
+  online-only and say so clearly.
+
+### 032 — Reach WCAG 2.2 AA for core flows
+
+**Priority:** P1 · **Size:** L · **Depends on:** 011, 023
+
+Make wallet connection, authentication, trip creation, expense entry, payment,
+and error recovery usable with keyboard, screen reader, zoom, and reduced
+motion settings.
+
+**Acceptance criteria**
+
+- Complete an automated audit plus manual keyboard and screen-reader testing
+  for each core flow.
+- Fix focus management in modals, semantic labels/error messages, contrast,
+  target size, live status updates, and reduced-motion behavior.
+- Add accessibility tests for the highest-risk reusable components.
+- Publish an accessibility statement and a feedback contact.
+
+### 033 — Add internationalization and locale-aware amounts/dates
+
+**Priority:** P2 · **Size:** L · **Depends on:** 019, 032
+
+Support more users without changing the canonical on-chain values. Translation
+and localized display must never alter the stored decimal representation.
+
+**Acceptance criteria**
+
+- UI copy is externalized and supports an initial set of locales selected by
+  user preference.
+- Dates, numeral grouping, and display currency use locale formatting, while
+  calculation/storage remains exact and locale-independent.
+- Input parsing clearly handles decimal separators and prevents ambiguous
+  amounts.
+- Pseudo-localization and RTL readiness are checked before adding more locales.
+
+### 034 — Establish product analytics with explicit consent
+
+**Priority:** P2 · **Size:** M · **Depends on:** 006, 032
+
+Measure activation and friction without turning payment data into surveillance.
+Analytics should help prioritize work such as wallet support and onboarding
+failures while collecting the minimum necessary data.
+
+**Acceptance criteria**
+
+- Define a public event taxonomy for non-sensitive funnel events and a
+  consent/opt-out experience appropriate to the deployment region.
+- Never send wallet addresses, transaction XDR, receipt contents, or free-text
+  descriptions to analytics by default.
+- Product dashboards show aggregate activation, completion, and failure rates.
+- Event payloads are reviewed, versioned, and tested for redaction.
+
+### 035 — Publish a versioned developer API and webhook framework
+
+**Priority:** P2 · **Size:** XL · **Depends on:** 007–010, 020
+
+Allow trusted integrations—accounting tools, event organizers, or internal
+systems—to consume permitted trip data and settlement events safely.
+
+**Acceptance criteria**
+
+- A versioned, documented API uses scoped tokens or signed OAuth-style grants,
+  never a raw Supabase service key.
+- API resources enforce the same authorization rules as the app and have
+  pagination, rate limits, idempotency, and audit logs.
+- Webhooks use signed payloads, retries, replay protection, delivery logs, and
+  a test endpoint.
+- A stable OpenAPI specification and sandbox examples are published.
 
 ---
 
-## 18. [A11y] Add focus trap and ARIA accessibility attributes to modals and interactive dialogs
+## Phase 5 — Optional product expansions
 
-### Description
-Modal dialogs across the application (e.g. `components/trips/InviteMemberModal.tsx`) do not meet WCAG 2.1 Level AA accessibility standards:
-1. Missing `aria-modal="true"` and `role="dialog"`.
-2. Missing `aria-labelledby` linking to the modal title.
-3. No focus trapping (`Tab` cycles through elements outside the modal behind the overlay).
-4. No listener for the `Escape` key to close the modal.
+These are deliberately separated from the core backlog. Validate user demand,
+compliance impact, and operating cost before committing roadmap capacity.
 
-### Affected Files
-- `components/trips/InviteMemberModal.tsx`
-- `components/trips/` (modals)
-- `components/expenses/` (modals)
+### 036 — Receipt capture with OCR-assisted draft creation
 
-### Recommended Fix
-Refactor custom modal implementations to use `@radix-ui/react-dialog` (which is already installed in `package.json`) to gain built-in focus trapping, screen-reader ARIA labeling, and keyboard navigation.
+**Priority:** P3 · **Size:** L · **Depends on:** 014, 019, 032
+
+Offer a mobile camera flow that extracts merchant, date, total, currency, and
+line items into an editable draft. OCR is assistance only, never accounting
+truth.
+
+**Acceptance criteria**
+
+- The user explicitly selects/captures a receipt and reviews every extracted
+  field before an expense is created.
+- The original receipt follows issue 014’s storage and retention rules.
+- Low-confidence fields are clearly marked; no total is inferred silently.
+- OCR provider, regions, cost limits, and data-processing terms are reviewed
+  before launch.
+
+### 037 — Create a travel workspace around a trip
+
+**Priority:** P3 · **Size:** L · **Depends on:** 017, 020
+
+Expand a trip from a ledger into a lightweight shared travel workspace with an
+itinerary, packing list, and booking references. Keep private booking details
+out of public chain metadata.
+
+**Acceptance criteria**
+
+- A trip can contain dated itinerary items, collaborative checklists, optional
+  reminders, and permission-controlled booking links/files.
+- Items can link to related expenses without copying financial data.
+- Calendar export uses a standard format and respects each member’s timezone.
+- Members can export or delete travel-only content under the privacy policy.
+
+### 038 — Add shared subscription management
+
+**Priority:** P3 · **Size:** L · **Depends on:** 015, 021, 022
+
+Make recurring services (streaming, utilities, software) first-class: track
+renewal dates, allocation changes, price increases, and reminders while leaving
+merchant billing outside the app.
+
+**Acceptance criteria**
+
+- A subscription records provider, renewal cadence/date, owner, share rule,
+  expected amount/currency, and cancellation/contact notes.
+- It can create a reviewable recurring expense draft and notify members before
+  renewal.
+- Users can record a price change and preserve historical amounts.
+- The app never stores merchant credentials or attempts to charge a card/bank
+  account.
+
+### 039 — Explore a shared household coordination module
+
+**Priority:** P3 · **Size:** M · **Depends on:** 017, 018, 032
+
+For flatmates, value often includes chores and shared supplies as well as
+settlement. Test whether lightweight coordination improves retention without
+forcing it into the finance model.
+
+**Acceptance criteria**
+
+- A research prototype supports recurring chores, rotation, completion history,
+  and optional links to supply expenses.
+- Chore completion is not treated as a financial payment and cannot modify
+  balances.
+- Members can opt out; trip owners can disable the module completely.
+- Pilot feedback defines success metrics before a general release.
+
+### 040 — Explore community funds and milestone-based spending
+
+**Priority:** P3 · **Size:** XL · **Depends on:** 005, 025, 030, 035
+
+This is a separate product direction for clubs, events, or open-source teams:
+members contribute to a shared fund and release money only after a documented
+milestone. It introduces custody, governance, and regulatory risks and must
+not be presented as a minor extension of split expenses.
+
+**Acceptance criteria**
+
+- Complete legal/compliance, custody, sanctions, consumer-protection, and
+  jurisdiction review before implementation.
+- A written product decision explains whether funds are non-custodial,
+  multisignature-controlled, or out of scope.
+- Milestones, voting/quorum, disputes, refunds, and emergency pause rules are
+  explicit and independently audited.
+- Build only as an isolated module/contract with separate threat model,
+  deployment, monitoring, and user disclosures.
 
 ---
 
-## 19. [UI/UX] Mobile viewport layout overflow on 56-character Stellar public keys and tables
+## Recommended delivery order
 
-### Description
-On small viewports (< 640px), tables and summary lists (such as `components/dashboard/RecentExpenseRow.tsx` and `components/trips/SettlementSummary.tsx`) display full 56-character Stellar public addresses (`G...`).
-
-This causes:
-- Horizontal scrolling on mobile screens.
-- Misaligned flex rows and broken grid layouts.
-- Inconsistent address truncation across different screens.
-
-### Affected Files
-- `components/dashboard/RecentExpenseRow.tsx`
-- `components/trips/SettlementSummary.tsx`
-- `components/trips/TripCard.tsx`
-
-### Recommended Fix
-Create a reusable `<WalletAddressBadge address={...} truncateLength={4} copyable />` component that standardizes address presentation (e.g. `GBBD...4MNO`) with a 1-tap copy button and tooltip.
-
----
-
-## 20. [Observability] Add distributed correlation IDs (`x-request-id`) across client, API routes, and Horizon calls
-
-### Description
-Currently, when a money-path operation fails (such as an attestation failure at `/api/settlement/attest` or Horizon transaction submission error), logs are captured independently in browser `console.error`, server logs via `/api/error-report`, and Horizon error codes.
-
-There is no unifying trace identifier or correlation ID (`x-request-id`) generated on the client and propagated through API request headers, error reports, and database intent records. Diagnosing production issues requires manual timestamp correlation.
-
-### Affected Files
-- `lib/observability/reportError.ts`
-- `lib/settlement/intent.ts`
-- `app/api/settlement/attest/route.ts`
-- `app/api/error-report/route.ts`
-
-### Recommended Fix
-Generate an `X-Request-Id` UUID on each settlement interaction. Propagate this header through API route calls, attach it to `SettlementIntentRow` and `reportError` payloads, and include it in structured server log output.
+1. Finish issues **001–010** before any public-network launch or feature that
+   increases financial volume.
+2. Deliver **011–016**, then test their value with active expense-sharing
+   groups before moving to templates, contacts, and exports.
+3. Treat **021**, **027**, and **030** as security-sensitive projects with
+   design review and contract audit checkpoints, not normal UI tickets.
+4. Schedule **031–035** alongside feature work, not as a final polish phase.
+5. Run discovery for **036–040** first; they are opportunities, not promises.
