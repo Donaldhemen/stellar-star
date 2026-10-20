@@ -1811,141 +1811,159 @@ CREATE POLICY export_audit_events_insert_actor ON public.export_audit_events
 GRANT SELECT, INSERT ON public.export_audit_events TO authenticated;
 
 -- ============================================================================
--- Partial settlement installments (#325, migrations/0012)
+-- Reminders and payment requests (#326, migrations/0013)
 -- ============================================================================
--- A share is settled over one or more on-chain payments; the share is `paid`
--- only when its installments sum to exactly what it owes. Overpayments are
--- rejected (SQLSTATE 23514); re-recording a known txHash is a no-op.
+-- In-app reminders always; email/push only when the recipient opted in.
+-- Nothing is sent without a click or a user-created schedule.
 
-CREATE OR REPLACE FUNCTION public.record_share_installment(
-  p_expense_id  UUID,
-  p_member_id   TEXT,
-  p_installment JSONB
-)
-RETURNS SETOF public.expenses
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $fn$
-DECLARE
-  v_expense        public.expenses;
-  v_shares         JSONB;
-  v_share          JSONB;
-  v_updated_shares JSONB := '[]'::jsonb;
-  v_installments   JSONB;
-  v_tx_hash        TEXT;
-  v_amount_stroops NUMERIC;
-  v_owed_stroops   NUMERIC;
-  v_paid_stroops   NUMERIC;
-  v_found          BOOLEAN := false;
-  v_duplicate      BOOLEAN := false;
-  v_all_paid       BOOLEAN := true;
-  v_len            INT;
-  v_idx            INT;
-BEGIN
-  v_tx_hash := lower(trim(p_installment ->> 'txHash'));
-  IF v_tx_hash IS NULL OR v_tx_hash !~ '^[0-9a-f]{64}$' THEN
-    RAISE EXCEPTION 'Installment txHash must be a 64-character hex transaction hash'
-      USING ERRCODE = '22023';
-  END IF;
+CREATE TABLE IF NOT EXISTS public.payment_reminders (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  trip_id           TEXT        NOT NULL,
+  expense_id        TEXT        NOT NULL,
+  member_id         TEXT        NOT NULL,
+  recipient_wallet  TEXT        NOT NULL,
+  sender_wallet     TEXT        NOT NULL,
+  amount            TEXT        NOT NULL CHECK (amount ~ '^[0-9]+(\.[0-9]{1,7})?$'),
+  asset             TEXT        NOT NULL DEFAULT 'native',
+  note              TEXT        CHECK (note IS NULL OR char_length(note) <= 280),
+  trigger           TEXT        NOT NULL DEFAULT 'manual' CHECK (trigger IN ('manual', 'schedule')),
+  schedule_id       UUID,
+  state             TEXT        NOT NULL DEFAULT 'delivered'
+                      CHECK (state IN ('delivered', 'read', 'dismissed', 'cancelled', 'muted')),
+  channels          TEXT[]      NOT NULL DEFAULT ARRAY['in_app']::TEXT[],
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  read_at           TIMESTAMPTZ,
+  CONSTRAINT payment_reminders_not_self CHECK (sender_wallet <> recipient_wallet)
+);
 
-  IF (p_installment ->> 'amountStroops') IS NULL
-     OR (p_installment ->> 'amountStroops') !~ '^[0-9]{1,20}$' THEN
-    RAISE EXCEPTION 'Installment amountStroops must be a non-negative integer string'
-      USING ERRCODE = '22023';
-  END IF;
-  v_amount_stroops := (p_installment ->> 'amountStroops')::NUMERIC;
-  IF v_amount_stroops <= 0 THEN
-    RAISE EXCEPTION 'Installment amount must be greater than zero' USING ERRCODE = '23514';
-  END IF;
+CREATE INDEX IF NOT EXISTS idx_payment_reminders_recipient_created_at
+  ON public.payment_reminders (recipient_wallet, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_payment_reminders_sender_created_at
+  ON public.payment_reminders (sender_wallet, created_at DESC);
 
-  SELECT * INTO v_expense
-    FROM public.expenses
-   WHERE id = p_expense_id
-     FOR UPDATE;
+CREATE TABLE IF NOT EXISTS public.reminder_events (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  reminder_id  UUID REFERENCES public.payment_reminders (id) ON DELETE CASCADE,
+  actor_wallet TEXT        NOT NULL,
+  kind         TEXT        NOT NULL CHECK (kind IN (
+                 'sent', 'delivered', 'skipped', 'read', 'dismissed', 'cancelled',
+                 'muted_trip', 'unmuted_trip', 'muted_sender', 'unmuted_sender',
+                 'opted_in', 'opted_out', 'unsubscribed', 'schedule_created', 'schedule_disabled'
+               )),
+  channel      TEXT        CHECK (channel IS NULL OR channel IN ('in_app', 'email', 'push')),
+  detail       TEXT        CHECK (detail IS NULL OR char_length(detail) <= 200),
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'Expense not found' USING ERRCODE = 'P0002';
-  END IF;
+CREATE INDEX IF NOT EXISTS idx_reminder_events_reminder_created_at
+  ON public.reminder_events (reminder_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_reminder_events_actor_created_at
+  ON public.reminder_events (actor_wallet, created_at DESC);
 
-  -- Only a member of the expense may record a payment against it.
-  IF public.current_wallet() IS NULL
-     OR NOT (public.current_wallet() = ANY (v_expense.member_wallets)) THEN
-    RAISE EXCEPTION 'Not a member of this expense' USING ERRCODE = '42501';
-  END IF;
+CREATE TABLE IF NOT EXISTS public.reminder_preferences (
+  wallet               TEXT PRIMARY KEY,
+  email_opt_in         BOOLEAN     NOT NULL DEFAULT FALSE,
+  email_address        TEXT        CHECK (email_address IS NULL OR char_length(email_address) <= 254),
+  push_opt_in          BOOLEAN     NOT NULL DEFAULT FALSE,
+  push_endpoint        TEXT        CHECK (push_endpoint IS NULL OR char_length(push_endpoint) <= 1024),
+  muted_trip_ids       TEXT[]      NOT NULL DEFAULT ARRAY[]::TEXT[],
+  muted_sender_wallets TEXT[]      NOT NULL DEFAULT ARRAY[]::TEXT[],
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
-  v_shares := COALESCE(v_expense.shares, '[]'::jsonb);
-  v_len := jsonb_array_length(v_shares);
+CREATE TABLE IF NOT EXISTS public.reminder_schedules (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  trip_id       TEXT        NOT NULL,
+  owner_wallet  TEXT        NOT NULL,
+  interval_days INT         NOT NULL CHECK (interval_days BETWEEN 1 AND 30),
+  next_run_at   TIMESTAMPTZ NOT NULL,
+  active        BOOLEAN     NOT NULL DEFAULT TRUE,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
-  FOR v_idx IN 0..(v_len - 1) LOOP
-    v_share := v_shares -> v_idx;
+-- One active schedule per (trip, owner): re-creating replaces, never stacks.
+CREATE UNIQUE INDEX IF NOT EXISTS reminder_schedules_one_active
+  ON public.reminder_schedules (trip_id, owner_wallet)
+  WHERE active;
+CREATE INDEX IF NOT EXISTS idx_reminder_schedules_due
+  ON public.reminder_schedules (next_run_at)
+  WHERE active;
 
-    IF (v_share ->> 'memberId') = p_member_id THEN
-      v_found := true;
-      v_installments := COALESCE(v_share -> 'installments', '[]'::jsonb);
+DROP TRIGGER IF EXISTS trg_01_payment_reminders_set_updated_at ON public.payment_reminders;
+CREATE TRIGGER trg_01_payment_reminders_set_updated_at
+  BEFORE UPDATE ON public.payment_reminders
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
-      IF EXISTS (
-        SELECT 1 FROM jsonb_array_elements(v_installments) AS i
-         WHERE lower(i ->> 'txHash') = v_tx_hash
-      ) THEN
-        v_duplicate := true;
-      ELSE
-        IF COALESCE((v_share ->> 'paid')::boolean, false) THEN
-          RAISE EXCEPTION 'Share is already fully settled' USING ERRCODE = '23514';
-        END IF;
+DROP TRIGGER IF EXISTS trg_01_reminder_preferences_set_updated_at ON public.reminder_preferences;
+CREATE TRIGGER trg_01_reminder_preferences_set_updated_at
+  BEFORE UPDATE ON public.reminder_preferences
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
-        v_owed_stroops := (v_share ->> 'amount')::NUMERIC * 10000000;
-        SELECT COALESCE(SUM((i ->> 'amountStroops')::NUMERIC), 0)
-          INTO v_paid_stroops
-          FROM jsonb_array_elements(v_installments) AS i;
+DROP TRIGGER IF EXISTS trg_01_reminder_schedules_set_updated_at ON public.reminder_schedules;
+CREATE TRIGGER trg_01_reminder_schedules_set_updated_at
+  BEFORE UPDATE ON public.reminder_schedules
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
-        IF v_paid_stroops + v_amount_stroops > v_owed_stroops THEN
-          RAISE EXCEPTION 'OVERPAYMENT: installment of % stroops exceeds remaining % stroops',
-            v_amount_stroops, v_owed_stroops - v_paid_stroops
-            USING ERRCODE = '23514';
-        END IF;
+-- ─── ROW LEVEL SECURITY ──────────────────────────────────────────────────────
+ALTER TABLE public.payment_reminders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.reminder_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.reminder_preferences ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.reminder_schedules ENABLE ROW LEVEL SECURITY;
 
-        v_paid_stroops := v_paid_stroops + v_amount_stroops;
-        v_installments := v_installments || jsonb_build_array(
-          p_installment || jsonb_build_object('txHash', v_tx_hash)
-        );
-        v_share := v_share || jsonb_build_object(
-          'installments', v_installments,
-          'paidStroops', v_paid_stroops::TEXT,
-          'paid', v_paid_stroops = v_owed_stroops
-        );
-        IF v_paid_stroops = v_owed_stroops THEN
-          v_share := v_share || jsonb_build_object('txHash', v_tx_hash);
-        END IF;
-      END IF;
-    END IF;
+-- A reminder is visible only to the two wallets it is between.
+DROP POLICY IF EXISTS payment_reminders_select_party ON public.payment_reminders;
+CREATE POLICY payment_reminders_select_party ON public.payment_reminders
+  FOR SELECT TO authenticated
+  USING (public.current_wallet() IN (sender_wallet, recipient_wallet));
 
-    IF NOT COALESCE((v_share ->> 'paid')::boolean, false) THEN
-      v_all_paid := false;
-    END IF;
+DROP POLICY IF EXISTS payment_reminders_insert_sender ON public.payment_reminders;
+CREATE POLICY payment_reminders_insert_sender ON public.payment_reminders
+  FOR INSERT TO authenticated
+  WITH CHECK (sender_wallet = public.current_wallet());
 
-    v_updated_shares := v_updated_shares || jsonb_build_array(v_share);
-  END LOOP;
+DROP POLICY IF EXISTS payment_reminders_update_party ON public.payment_reminders;
+CREATE POLICY payment_reminders_update_party ON public.payment_reminders
+  FOR UPDATE TO authenticated
+  USING (public.current_wallet() IN (sender_wallet, recipient_wallet))
+  WITH CHECK (public.current_wallet() IN (sender_wallet, recipient_wallet));
 
-  IF NOT v_found THEN
-    RAISE EXCEPTION 'Share not found on this expense' USING ERRCODE = 'P0002';
-  END IF;
+-- History is append-only: no UPDATE or DELETE policy exists.
+DROP POLICY IF EXISTS reminder_events_select_party ON public.reminder_events;
+CREATE POLICY reminder_events_select_party ON public.reminder_events
+  FOR SELECT TO authenticated
+  USING (
+    actor_wallet = public.current_wallet()
+    OR EXISTS (
+      SELECT 1 FROM public.payment_reminders r
+       WHERE r.id = reminder_id
+         AND public.current_wallet() IN (r.sender_wallet, r.recipient_wallet)
+    )
+  );
 
-  IF v_duplicate THEN
-    RETURN QUERY SELECT * FROM public.expenses WHERE id = p_expense_id;
-    RETURN;
-  END IF;
+DROP POLICY IF EXISTS reminder_events_insert_actor ON public.reminder_events;
+CREATE POLICY reminder_events_insert_actor ON public.reminder_events
+  FOR INSERT TO authenticated
+  WITH CHECK (actor_wallet = public.current_wallet());
 
-  RETURN QUERY UPDATE public.expenses
-     SET shares = v_updated_shares,
-         settled = v_all_paid,
-         version = version + 1
-   WHERE id = p_expense_id
-   RETURNING *;
-END;
-$fn$;
+DROP POLICY IF EXISTS reminder_preferences_own ON public.reminder_preferences;
+CREATE POLICY reminder_preferences_own ON public.reminder_preferences
+  FOR ALL TO authenticated
+  USING (wallet = public.current_wallet())
+  WITH CHECK (wallet = public.current_wallet());
 
-GRANT EXECUTE ON FUNCTION public.record_share_installment(UUID, TEXT, JSONB) TO authenticated;
+DROP POLICY IF EXISTS reminder_schedules_owner ON public.reminder_schedules;
+CREATE POLICY reminder_schedules_owner ON public.reminder_schedules
+  FOR ALL TO authenticated
+  USING (owner_wallet = public.current_wallet())
+  WITH CHECK (owner_wallet = public.current_wallet());
+
+GRANT SELECT, INSERT, UPDATE ON public.payment_reminders TO authenticated;
+GRANT SELECT, INSERT ON public.reminder_events TO authenticated;
+GRANT SELECT, INSERT, UPDATE ON public.reminder_preferences TO authenticated;
+GRANT SELECT, INSERT, UPDATE ON public.reminder_schedules TO authenticated;
 
 -- ─── RECORD APPLIED MIGRATIONS ───────────────────────────────────────────────
 
@@ -1959,5 +1977,5 @@ VALUES
   ('0006', '0006_settlement_request_ids', 'settlement_request_ids_v1'),
   ('0007', '0007_composite_query_indexes', 'composite_query_indexes_v1'),
   ('0011', '0011_export_audit_events', 'export_audit_events_v1'),
-  ('0012', '0012_share_installments', 'share_installments_v1')
+  ('0013', '0013_payment_reminders', 'payment_reminders_v1')
 ON CONFLICT (version) DO NOTHING;

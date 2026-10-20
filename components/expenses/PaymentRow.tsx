@@ -12,7 +12,7 @@ import { QRToggle } from "@/components/payment/QRCodeDisplay";
 import { ReceiptModal } from "@/components/expenses/ReceiptModal";
 import { trimToMemoBytes } from "@/lib/stellar/buildTransaction";
 import { Money } from "@/components/ui/Money";
-import { planInstallment, shareBalance, installmentsOf } from "@/lib/settlement/installments";
+import { RemindButton } from "@/components/reminders/RemindButton";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -35,6 +35,8 @@ interface PaymentRowProps {
   poolBalance?: string | null;
   depositLoading?: boolean;
   onDepositPool?: (amount: string) => Promise<boolean>;
+  /** When set, the payer can send this member a payment request (#326). */
+  reminderContext?: { tripId: string; expenseId: string };
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -50,6 +52,7 @@ export function PaymentRow({
   poolBalance,
   depositLoading,
   onDepositPool,
+  reminderContext,
 }: PaymentRowProps) {
   const [showReceipt, setShowReceipt] = useState(false);
   const [partialOpen, setPartialOpen] = useState(false);
@@ -326,6 +329,23 @@ export function PaymentRow({
             )}
           </div>
         )}
+
+        {/* Payment request - only the payer, only for an unpaid share (#326) */}
+        {reminderContext &&
+          !share.paid &&
+          !isPayerRow &&
+          !!share.walletAddress &&
+          !!connectedWalletAddress &&
+          connectedWalletAddress === payerWalletAddress && (
+            <div className="pl-11">
+              <RemindButton
+                tripId={reminderContext.tripId}
+                expenseId={reminderContext.expenseId}
+                memberId={share.memberId}
+                memberName={share.name}
+              />
+            </div>
+          )}
 
         {/* QR toggle - only if unpaid and has wallet address */}
         {!share.paid && share.walletAddress && (
