@@ -1,0 +1,48 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { uploadExpenseReceipt, ReceiptRequestError } from "@/lib/receipts/client";
+
+export function ReceiptAttachmentStep({ expenseId, file, onDone }: {
+  expenseId: string; file: File; onDone: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [stored, setStored] = useState(false);
+  const [quarantined, setQuarantined] = useState(false);
+  const started = useRef(false);
+  const inFlight = useRef(false);
+  const upload = async () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setBusy(true); setError("");
+    try {
+      // Do not compress or re-encode: attach the exact user-selected original.
+      const receipt = await uploadExpenseReceipt(expenseId, file, file.name, "");
+      setQuarantined(receipt.status === "quarantined");
+      setStored(true);
+    } catch (err) {
+      // A lost successful response can be retried safely: same expense + checksum.
+      if (err instanceof ReceiptRequestError && err.status === 409) setStored(true);
+      else setError("The expense was created, but its original receipt was not attached. Keep this screen open and retry. No new expense will be created.");
+    } finally {
+      inFlight.current = false;
+      setBusy(false);
+    }
+  };
+  useEffect(() => {
+    if (!started.current) { started.current = true; void upload(); }
+    // This step is mounted once for an immutable expense and file.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return <section aria-label="Receipt attachment status" className="space-y-3">
+    <p className="font-semibold">Expense created.</p>
+    {busy && <p role="status">Saving the original receipt privately…</p>}
+    {error && <p role="alert">{error}</p>}
+    {!stored && !busy && <button type="button" onClick={() => void upload()}>Retry receipt attachment</button>}
+    {stored && <>
+      <p role="status">{quarantined ? "Original stored in quarantine for safety review. It cannot be downloaded." : "Original receipt saved under the receipt retention policy."}</p>
+      <button type="button" onClick={onDone}>Continue</button>
+    </>}
+  </section>;
+}
