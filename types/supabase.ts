@@ -233,6 +233,34 @@ export type ExpenseDraftRow = {
   resolved_by_wallet: string | null;
 };
 
+export type TripBudgetRow = {
+  trip_id: string;
+  currency: string;
+  total_amount: string | null;
+  category_caps: Json;
+  thresholds: number[];
+  version: number;
+  created_by_wallet: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type BudgetAlertRow = {
+  id: string;
+  trip_id: string;
+  scope: string;
+  threshold: number;
+  spent_at_crossing: string;
+  fired_at: string;
+  cleared_at: string | null;
+};
+
+export type BudgetAlertMuteRow = {
+  trip_id: string;
+  member_wallet: string;
+  created_at: string;
+};
+
 export type SchemaMigrationRow = {
   version: string;
   name: string;
@@ -414,6 +442,24 @@ export type Database = {
         };
         // Only the resolution changes; the frozen payload and source never do.
         Update: Partial<Pick<ExpenseDraftRow, "status" | "expense_id" | "resolved_at" | "resolved_by_wallet">>;
+        Relationships: [];
+      };
+      trip_budgets: {
+        Row: TripBudgetRow;
+        Insert: Omit<TripBudgetRow, "created_at" | "updated_at" | "version"> & { version?: number };
+        Update: Partial<Omit<TripBudgetRow, "trip_id" | "created_at" | "updated_at" | "created_by_wallet">>;
+        Relationships: [];
+      };
+      budget_alerts: {
+        Row: BudgetAlertRow;
+        Insert: Pick<BudgetAlertRow, "trip_id" | "scope" | "threshold" | "spent_at_crossing">;
+        Update: Partial<Pick<BudgetAlertRow, "cleared_at">>;
+        Relationships: [];
+      };
+      budget_alert_mutes: {
+        Row: BudgetAlertMuteRow;
+        Insert: Pick<BudgetAlertMuteRow, "trip_id" | "member_wallet">;
+        Update: Record<string, never>;
         Relationships: [];
       };
       schema_migrations: {
