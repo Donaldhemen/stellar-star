@@ -36,7 +36,7 @@ export function ExpenseCard({ expense, currentUserPublicKey, onDelete, tripId }:
     depositPool,
   } = usePayment({ expenseId: expense.id });
 
-  const { formatDate } = useLocale();
+  const { formatDate, t } = useLocale();
   const paidCount = expense.shares.filter((share) => share.paid).length;
   const payer = expense.members.find((member) => member.id === expense.paidByMemberId);
   const createdAt = formatDate(expense.createdAt, {
@@ -90,12 +90,14 @@ export function ExpenseCard({ expense, currentUserPublicKey, onDelete, tripId }:
               <Money amount={expense.totalAmount} asset="XLM" />
               {fiatAmount !== null && (
                 <>
-                  <span>(agreed as </span>
+                  <span>({t("expenses.agreedAs")}{" "}</span>
                   <Money amount={fiatAmount} asset={expense.currency} />
                   <span>)</span>
                 </>
               )}
-              <span>&middot; {expense.members.length} members &middot; {createdAt}</span>
+              <span>
+                &middot; {t("expenses.membersCount", { count: String(expense.members.length) })} &middot; {createdAt}
+              </span>
             </p>
             {(expense.category || (expense.tags?.length ?? 0) > 0) && (
               <p className="mt-1 flex flex-wrap items-center gap-1 text-[10px]">
@@ -118,11 +120,14 @@ export function ExpenseCard({ expense, currentUserPublicKey, onDelete, tripId }:
         <div className="flex items-center gap-2 shrink-0">
           {expense.settled ? (
             <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 bg-[#2DD4BF]/30 text-[#134E4A] rounded-full">
-              Settled
+              {t("expenses.settled")}
             </span>
           ) : (
             <span className="text-xs text-[#888]">
-              {paidCount}/{expense.shares.length} paid
+              {t("expenses.paidRatio", {
+                paid: String(paidCount),
+                total: String(expense.shares.length),
+              })}
             </span>
           )}
           <ChevronRight
@@ -153,7 +158,7 @@ export function ExpenseCard({ expense, currentUserPublicKey, onDelete, tripId }:
           >
             <div className="px-4 pt-3 pb-4 border-t border-[#F5F5F5]">
               <p className="mb-3 rounded-lg bg-[#FAFAFA] px-3 py-2 text-[11px] text-[#666]" title="Saved with the expense; cannot be edited">
-                <span className="font-semibold text-[#444]">Exchange rate: </span>
+                <span className="font-semibold text-[#444]">{t("expenses.exchangeRateLabel")} </span>
                 {describeSavedConversion(expense)}
               </p>
               {expense.description && (
@@ -229,12 +234,14 @@ function ExpenseCardFooter({
   onConfirmDelete,
   onRequestDelete,
 }: ExpenseCardFooterProps) {
+  const { t } = useLocale();
+
   if (confirmDelete) {
     return (
       <div className="mt-3 pt-3 border-t border-[#F5F5F5]">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-3 py-2 rounded-xl bg-red-50 border border-red-200">
           <p className="text-xs text-red-600 font-medium">
-            Delete &ldquo;{expense.title}&rdquo;? This cannot be undone.
+            {t("expenses.deleteConfirm", { title: expense.title })}
           </p>
           <div className="flex items-center gap-2 shrink-0">
             <button
@@ -244,7 +251,7 @@ function ExpenseCardFooter({
               }}
               className="text-xs font-semibold text-[#888] hover:text-[#0F0F14] transition-colors"
             >
-              Cancel
+              {t("common.cancel")}
             </button>
             <button
               onClick={(event) => {
@@ -254,7 +261,7 @@ function ExpenseCardFooter({
               className="inline-flex items-center gap-1 text-xs font-bold text-white bg-red-500 hover:bg-red-600 px-3 py-1 rounded-lg transition-colors"
             >
               <Trash2 size={11} />
-              Delete
+              {t("common.delete")}
             </button>
           </div>
         </div>
@@ -266,7 +273,7 @@ function ExpenseCardFooter({
     <div className="mt-3 pt-3 border-t border-[#F5F5F5]">
       <div className="flex items-center justify-between">
         <span className="text-[10px] uppercase tracking-wider font-semibold text-[#CCC] break-words">
-          Split: {expense.splitMode}
+          {t("expenses.splitLabel", { mode: expense.splitMode })}
         </span>
         {canDelete ? (
           <button
@@ -277,10 +284,10 @@ function ExpenseCardFooter({
             className="flex items-center gap-1.5 text-xs font-medium text-[#CCC] hover:text-red-500 transition-colors"
           >
             <Trash2 size={12} />
-            Delete
+            {t("common.delete")}
           </button>
         ) : showDeleteHint ? (
-          <span className="text-[10px] text-[#CCC] italic">Only the payer can delete</span>
+          <span className="text-[10px] text-[#CCC] italic">{t("expenses.onlyPayerCanDelete")}</span>
         ) : null}
       </div>
     </div>
