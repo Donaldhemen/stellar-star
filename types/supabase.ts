@@ -92,6 +92,58 @@ export type ExportAuditEventRow = {
   created_at: string;
 };
 
+export type PaymentReminderRow = {
+  id: string;
+  trip_id: string;
+  expense_id: string;
+  member_id: string;
+  recipient_wallet: string;
+  sender_wallet: string;
+  amount: string;
+  asset: string;
+  note: string | null;
+  trigger: "manual" | "schedule";
+  schedule_id: string | null;
+  state: "delivered" | "read" | "dismissed" | "cancelled" | "muted";
+  channels: string[];
+  created_at: string;
+  updated_at: string;
+  read_at: string | null;
+};
+
+export type ReminderEventRow = {
+  id: string;
+  reminder_id: string | null;
+  actor_wallet: string;
+  kind: string;
+  channel: "in_app" | "email" | "push" | null;
+  detail: string | null;
+  created_at: string;
+};
+
+export type ReminderPreferencesRow = {
+  wallet: string;
+  email_opt_in: boolean;
+  email_address: string | null;
+  push_opt_in: boolean;
+  push_endpoint: string | null;
+  muted_trip_ids: string[];
+  muted_sender_wallets: string[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type ReminderScheduleRow = {
+  id: string;
+  trip_id: string;
+  owner_wallet: string;
+  interval_days: number;
+  next_run_at: string;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
 export type AuthChallengeRow = {
   nonce: string;
   address: string;
@@ -415,6 +467,38 @@ export type Database = {
         Update: Record<string, never>;
         Relationships: [];
       };
+      payment_reminders: {
+        Row: PaymentReminderRow;
+        Insert: Pick<
+          PaymentReminderRow,
+          "trip_id" | "expense_id" | "member_id" | "recipient_wallet" | "sender_wallet" | "amount"
+        > &
+          Partial<Omit<PaymentReminderRow, "id" | "created_at" | "updated_at">>;
+        Update: Partial<Pick<PaymentReminderRow, "state" | "read_at" | "channels">>;
+        Relationships: [];
+      };
+      reminder_events: {
+        Row: ReminderEventRow;
+        Insert: Pick<ReminderEventRow, "actor_wallet" | "kind"> &
+          Partial<Omit<ReminderEventRow, "id" | "created_at" | "actor_wallet" | "kind">>;
+        // Append-only: no UPDATE policy exists.
+        Update: Record<string, never>;
+        Relationships: [];
+      };
+      reminder_preferences: {
+        Row: ReminderPreferencesRow;
+        Insert: Pick<ReminderPreferencesRow, "wallet"> &
+          Partial<Omit<ReminderPreferencesRow, "wallet" | "created_at" | "updated_at">>;
+        Update: Partial<Omit<ReminderPreferencesRow, "wallet" | "created_at" | "updated_at">>;
+        Relationships: [];
+      };
+      reminder_schedules: {
+        Row: ReminderScheduleRow;
+        Insert: Pick<ReminderScheduleRow, "trip_id" | "owner_wallet" | "interval_days" | "next_run_at"> &
+          Partial<Pick<ReminderScheduleRow, "active">>;
+        Update: Partial<Pick<ReminderScheduleRow, "interval_days" | "next_run_at" | "active">>;
+        Relationships: [];
+      };
       export_audit_events: {
         Row: ExportAuditEventRow;
         Insert: Pick<ExportAuditEventRow, "actor_wallet" | "export_kind" | "status"> &
@@ -671,6 +755,14 @@ export type Database = {
         Args: {
           p_updates: Json;
           p_tx_hash: string;
+        };
+        Returns: ExpenseRow[];
+      };
+      record_share_installment: {
+        Args: {
+          p_expense_id: string;
+          p_member_id: string;
+          p_installment: Json;
         };
         Returns: ExpenseRow[];
       };

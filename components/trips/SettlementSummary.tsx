@@ -28,6 +28,7 @@ import { buildPaymentEventKey } from "@/lib/stellar/events";
 import { Money as MoneyDisplay } from "@/components/ui/Money";
 import { WalletAddressBadge } from "@/components/ui/WalletAddressBadge";
 import { Money } from "@/lib/money";
+import { shareBalance } from "@/lib/settlement/installments";
 
 interface SettlementSummaryProps {
   trip: Trip;
@@ -46,14 +47,17 @@ function deriveRawDebts(expenses: Expense[]): RawDebt[] {
     for (const share of expense.shares) {
       const payer = expense.members.find((m) => m.id === expense.paidByMemberId);
       if (!payer || share.memberId === expense.paidByMemberId) continue;
-      if (share.paid) continue;
+      // A partly paid share (#325) still owes its remaining balance, and only
+      // that: never the original amount, and never "settled" until it is zero.
+      const balance = shareBalance(share);
+      if (balance.fullySettled) continue;
       debts.push({
         expenseId:  expense.id,
         fromId:     share.memberId,
         toId:       payer.id,
         from:       share.name,
         to:         payer.name,
-        amount:     share.amount,
+        amount:     balance.remaining,
         // The SETTLEMENT asset, never `expense.currency` — that is the fiat
         // the user typed, and `share.amount` was already converted out of it.
         // Tagging a EUR-entered debt as asset "EUR" put it in its own netting

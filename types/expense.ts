@@ -9,13 +9,44 @@ export interface Member {
   weight?: number;
 }
 
+/**
+ * One on-chain payment towards a share (#325). Append-only; see
+ * lib/settlement/installments.ts for the invariants.
+ */
+export interface ShareInstallment {
+  /** 1-based position within the share. */
+  seq: number;
+  /** Decimal string at ledger precision. */
+  amount: string;
+  /** `amount` as integer stroops/base units, the value every sum uses. */
+  amountStroops: string;
+  /** Stellar transaction that moved this installment, lowercase hex. */
+  txHash: string;
+  ledger?: number | null;
+  /** Expense id this installment is attested and recorded under on-chain. */
+  claimId: string;
+  /** Nonce of the oracle attestation covering this installment, if minted. */
+  attestationNonce?: string | null;
+  /** True once the attestation oracle confirmed the payment against Horizon. */
+  verified: boolean;
+  /** True once the settlement contract recorded this installment. */
+  onChain: boolean;
+  paidAt: string;
+}
+
 export interface SplitShare {
   memberId: string;
   name: string;
   walletAddress?: string;
+  /** What this member owes, in the settlement asset. */
   amount: string;
+  /** True only when the whole share is settled; never for a partial payment. */
   paid: boolean;
   txHash?: string;
+  /** Payments made towards this share. Absent on shares paid in one go. */
+  installments?: ShareInstallment[];
+  /** Sum of `installments` in integer stroops, kept alongside for SQL checks. */
+  paidStroops?: string;
 }
 
 export interface Expense {
