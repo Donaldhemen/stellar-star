@@ -42,6 +42,13 @@ export interface Expense {
   exchangeRate?: string;
   /** ISO timestamp of the `exchangeRate` quote, for provenance. */
   exchangeRateTimestamp?: string;
+  /** Provider that produced `exchangeRate` (e.g. "coingecko"). */
+  exchangeRateSource?: string;
+  /**
+   * The amount exactly as the user typed it, in `currency`. `totalAmount` is
+   * this converted at `exchangeRate`. Absent on rows created before #323.
+   */
+  enteredAmount?: string;
   /**
    * Canonical Stellar asset this expense settles in ("native", "USDC:GA5Z…").
    * Absent on rows created before multi-asset support, which all settle native.

@@ -214,9 +214,10 @@ export function rowToExpense(row: ExpenseRow): Expense {
     currency: row.currency,
     exchangeRate: row.exchange_rate ?? undefined,
     exchangeRateTimestamp: row.exchange_rate_timestamp ?? undefined,
-    settlementAsset: row.settlement_asset ?? null,
-    category: isExpenseCategory(row.category) ? row.category : null,
-    tags: row.tags ?? [],
+    exchangeRateSource: row.exchange_rate_source ?? undefined,
+    enteredAmount: row.entered_amount ?? undefined,
+    // Rows from before migration 0010 lack the column and settle native.
+    settlementAsset: row.settlement_asset ?? "native",
     splitMode: row.split_mode,
     paidByMemberId: row.paid_by_member_id,
     members: (row.members ?? []) as unknown as Member[],
@@ -330,9 +331,9 @@ export function expenseToInsert(expense: Expense, creatorWallet: string): Expens
     currency: expense.currency ?? "XLM",
     exchange_rate: expense.exchangeRate ?? null,
     exchange_rate_timestamp: expense.exchangeRateTimestamp ?? null,
-    settlement_asset: expense.settlementAsset ?? null,
-    category: expense.category ?? null,
-    tags: normalizeTags(expense.tags),
+    exchange_rate_source: expense.exchangeRateSource ?? null,
+    entered_amount: expense.enteredAmount ?? null,
+    settlement_asset: expense.settlementAsset ?? "native",
     split_mode: expense.splitMode,
     paid_by_member_id: expense.paidByMemberId,
     members: expense.members as unknown as ExpenseInsert["members"],
@@ -419,7 +420,7 @@ export function tripToUpdate(updates: Partial<Trip>): TripUpdate {
 
 const USER_COLUMNS = "id, wallet_address, display_name, created_at, updated_at, last_login_at";
 const EXPENSE_COLUMNS =
-  "id, title, description, total_amount, currency, exchange_rate, exchange_rate_timestamp, settlement_asset, category, tags, split_mode, paid_by_member_id, members, shares, settled, created_by_wallet, member_wallets, created_at, updated_at";
+  "id, title, description, total_amount, currency, exchange_rate, exchange_rate_timestamp, exchange_rate_source, entered_amount, settlement_asset, split_mode, paid_by_member_id, members, shares, settled, created_by_wallet, member_wallets, created_at, updated_at";
 const TRIP_COLUMNS =
   "id, name, description, members, expense_ids, settled, created_by_wallet, member_wallets, starts_on, ends_on, recurring_rules, permissions, source_template_id, copied_from_trip_id, created_at, updated_at";
 const TRIP_TEMPLATE_COLUMNS =

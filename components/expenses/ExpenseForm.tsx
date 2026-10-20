@@ -3,7 +3,7 @@
 import { Input } from "@/components/ui/Input";
 import { ExpenseDescriptionField } from "@/components/expenses/ExpenseDescriptionField";
 import { ExpenseFormActions } from "@/components/expenses/ExpenseFormActions";
-import { ExpenseLabelsFields } from "@/components/expenses/ExpenseLabelsFields";
+import { ExpenseFxPanel } from "@/components/expenses/ExpenseFxPanel";
 import { ExpenseMemberList } from "@/components/expenses/ExpenseMemberList";
 import { ExpensePayerSelect } from "@/components/expenses/ExpensePayerSelect";
 import { ExpenseSplitModeControl } from "@/components/expenses/ExpenseSplitModeControl";
@@ -87,6 +87,17 @@ export function ExpenseForm({
         <ExpenseSplitModeControl value={form.splitMode} onChange={form.setSplitMode} />
       </div>
 
+      <ExpenseFxPanel
+        enteredAmount={form.totalAmount}
+        currency={form.currency}
+        quote={form.quote}
+        state={form.quoteState}
+        settlementAmount={form.settlementPreview}
+        error={form.errors.quote}
+        onRefresh={() => void form.refreshQuote()}
+        onUseSettlementAsset={() => form.setCurrency("XLM")}
+      />
+
       <ExpenseMemberList
         members={form.members}
         splitMode={form.splitMode}
@@ -106,7 +117,7 @@ export function ExpenseForm({
         shares={form.shares}
         namedMembers={form.namedMembers}
         payerName={form.payerName}
-        totalAmount={form.totalAmount}
+        totalAmount={form.settlementPreview ?? form.totalAmount}
       />
 
       <ExpenseFormActions submitting={form.submitting} onCancel={onCancel} />

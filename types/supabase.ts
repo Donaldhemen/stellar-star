@@ -39,12 +39,10 @@ export type ExpenseRow = {
   currency: string;
   exchange_rate: string | null;
   exchange_rate_timestamp: string | null;
-  /** Canonical Stellar asset key; NULL means native XLM (every pre-#317 row). Frozen on update. */
-  settlement_asset: string | null;
-  /** Checked against EXPENSE_CATEGORIES by `expenses_category_check`. */
-  category: string | null;
-  /** Normalized by the `trg_05_expenses_normalize_labels` trigger. */
-  tags: string[];
+  /** Provenance columns from migration 0010; frozen after insert. */
+  exchange_rate_source: string | null;
+  entered_amount: string | null;
+  settlement_asset: string;
   split_mode: "equal" | "custom";
   paid_by_member_id: string;
   members: Json;
@@ -331,20 +329,33 @@ export type Database = {
         Row: ExpenseRow;
         Insert: Omit<
           ExpenseRow,
-          ServerManaged | "version" | "settlement_asset" | "category" | "tags"
+          ServerManaged | "version" | "exchange_rate_source" | "entered_amount" | "settlement_asset"
         > & {
           id?: string;
           created_at?: string;
           currency?: string;
           settled?: boolean;
           version?: number;
-          settlement_asset?: string | null;
-          category?: string | null;
-          tags?: string[];
+          exchange_rate_source?: string | null;
+          entered_amount?: string | null;
+          settlement_asset?: string;
         };
-        // `created_by_wallet` and the amount/rate/asset fields are absent by
-        // design: the database freezes them on update.
-        Update: Partial<Omit<ExpenseRow, ServerManaged | "created_by_wallet" | "total_amount" | "currency" | "exchange_rate" | "exchange_rate_timestamp" | "settlement_asset">>;
+        // `created_by_wallet` and the amount/rate/provenance fields are absent
+        // by design: the database freezes them on update.
+        Update: Partial<
+          Omit<
+            ExpenseRow,
+            | ServerManaged
+            | "created_by_wallet"
+            | "total_amount"
+            | "currency"
+            | "exchange_rate"
+            | "exchange_rate_timestamp"
+            | "exchange_rate_source"
+            | "entered_amount"
+            | "settlement_asset"
+          >
+        >;
         Relationships: [];
       };
       trips: {
