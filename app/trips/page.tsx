@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
-import { Plus, ArrowLeft, Map, Inbox, Copy } from "lucide-react";
+import { Plus, ArrowLeft, Map, Inbox, Archive } from "lucide-react";
 import { useTripSearch } from "@/hooks/useTrip";
 import { useExpense } from "@/hooks/useExpense";
 import { useContacts } from "@/hooks/useContacts";
@@ -21,6 +21,7 @@ import { useToast } from "@/components/ui/Toast";
 import type { TripFormData, Trip } from "@/types/trip";
 import { Money } from "@/lib/money";
 import { settlementAssetOf } from "@/lib/settlement/expenseAsset";
+import { downloadArchive } from "@/lib/export/download";
 
 // ─── Empty state ──────────────────────────────────────────────────────────────
 
@@ -69,8 +70,20 @@ export default function TripsPage() {
   const [showForm, setShowForm] = useState(false);
   const [showCopy, setShowCopy] = useState(false);
   const [creating, setCreating] = useState(false);
-  // Loaded only while the new-trip form is open.
-  const { contacts } = useContacts(showForm);
+  const [archiving, setArchiving] = useState(false);
+
+  // Server-side, RLS-scoped, rate-limited and audited (see /api/exports/archive).
+  const handleArchiveAll = async () => {
+    setArchiving(true);
+    try {
+      await downloadArchive();
+      toastSuccess("Archive downloaded", "All your trips, with exact amounts and provenance.");
+    } catch (err: any) {
+      toastError("Could not export archive", err?.message || "Please try again.");
+    } finally {
+      setArchiving(false);
+    }
+  };
  
   const handleDeleteTrip = async (id: string) => {
     try {
@@ -157,22 +170,24 @@ export default function TripsPage() {
             </div>
 
             {totalTrips > 0 && (
-              <div className="flex items-center gap-2 shrink-0">
-                <button
-                  onClick={() => setShowCopy(true)}
-                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-[#E5E5E5] bg-white text-[#0F0F14] text-sm font-bold hover:bg-[#F0F0F0] transition-all"
-                >
-                  <Copy size={14} />
-                  <span className="hidden sm:inline">From template</span>
-                </button>
-                <button
-                  onClick={() => setShowForm(true)}
-                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#0F0F14] text-[#2DD4BF] text-sm font-bold hover:bg-[#1A1A22] transition-all"
-                >
-                  <Plus size={14} />
-                  New
-                </button>
-              </div>
+              <button
+                onClick={handleArchiveAll}
+                disabled={archiving}
+                title="Download a portable archive of all your trips"
+                className="inline-flex items-center gap-2 px-3 py-2.5 rounded-xl border border-[#E5E5E5] bg-white text-[#555] text-sm font-bold hover:bg-[#F0F0F0] transition-all shrink-0 disabled:opacity-50"
+              >
+                <Archive size={14} />
+                <span className="hidden sm:inline">{archiving ? "Preparing…" : "Archive"}</span>
+              </button>
+            )}
+            {totalTrips > 0 && (
+              <button
+                onClick={() => setShowForm(true)}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#0F0F14] text-[#2DD4BF] text-sm font-bold hover:bg-[#1A1A22] transition-all shrink-0"
+              >
+                <Plus size={14} />
+                New
+              </button>
             )}
           </div>
 

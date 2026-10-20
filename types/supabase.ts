@@ -77,35 +77,19 @@ export type TripRow = {
   updated_at: string;
 };
 
-export type ContactRow = {
+export type ExportAuditEventRow = {
   id: string;
-  owner_wallet: string;
-  display_name: string;
-  wallet_address: string | null;
-  wallet_verified: boolean;
-  claimed_by_wallet: string | null;
-  verified_at: string | null;
-  invite_destination: string | null;
-  invite_channel: "email" | "phone" | "other" | null;
-  claim_token_hash: string | null;
-  claim_expires_at: string | null;
+  actor_wallet: string;
+  export_kind: "archive";
+  status: "served" | "rate_limited" | "forbidden" | "failed";
+  trip_ids: string[];
+  trip_count: number;
+  expense_count: number;
+  byte_size: number;
+  content_sha256: string | null;
+  request_id: string | null;
+  client_ip_hash: string | null;
   created_at: string;
-  updated_at: string;
-};
-
-export type ContactWalletChangeRow = {
-  id: string;
-  contact_id: string;
-  owner_wallet: string;
-  contact_name: string;
-  old_wallet: string | null;
-  new_wallet: string;
-  status: "pending_notice" | "applied" | "cancelled";
-  affected_trip_ids: string[];
-  notice_until: string;
-  verified: boolean;
-  created_at: string;
-  applied_at: string | null;
 };
 
 export type AuthChallengeRow = {
@@ -428,6 +412,14 @@ export type Database = {
         Row: ContactWalletChangeRow;
         // Written only by the SECURITY DEFINER functions.
         Insert: Record<string, never>;
+        Update: Record<string, never>;
+        Relationships: [];
+      };
+      export_audit_events: {
+        Row: ExportAuditEventRow;
+        Insert: Pick<ExportAuditEventRow, "actor_wallet" | "export_kind" | "status"> &
+          Partial<Omit<ExportAuditEventRow, "id" | "created_at" | "actor_wallet" | "export_kind" | "status">>;
+        // Append-only: no UPDATE policy exists.
         Update: Record<string, never>;
         Relationships: [];
       };
