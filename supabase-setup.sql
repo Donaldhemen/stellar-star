@@ -158,6 +158,12 @@ BEGIN
     ALTER TABLE public.expenses ADD COLUMN exchange_rate_timestamp TIMESTAMPTZ;
   END IF;
 
+  -- expenses FX provenance columns (#323, migrations/0010) ------------------
+  ALTER TABLE public.expenses
+    ADD COLUMN IF NOT EXISTS entered_amount       TEXT,
+    ADD COLUMN IF NOT EXISTS exchange_rate_source TEXT,
+    ADD COLUMN IF NOT EXISTS settlement_asset     TEXT NOT NULL DEFAULT 'native';
+
   -- expenses version column ------------------------------------------------
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                  WHERE table_schema = 'public' AND table_name = 'expenses' AND column_name = 'version') THEN
@@ -267,13 +273,16 @@ BEGIN
     || jsonb_build_object('created_by_wallet', old_json -> 'created_by_wallet');
 
   -- The original fiat/XLM snapshot is part of the debt. Freeze it even when
-  -- exchange_rate is NULL (for native XLM expenses), and freeze the timestamp
-  -- together with the rate so the provenance cannot be rewritten separately.
+  -- exchange_rate is NULL (for native XLM expenses), and freeze the source and
+  -- timestamp together with the rate so the provenance cannot be rewritten.
   new_json := new_json
     || jsonb_build_object('total_amount', old_json -> 'total_amount')
     || jsonb_build_object('currency', old_json -> 'currency')
     || jsonb_build_object('exchange_rate', old_json -> 'exchange_rate')
-    || jsonb_build_object('exchange_rate_timestamp', old_json -> 'exchange_rate_timestamp');
+    || jsonb_build_object('exchange_rate_timestamp', old_json -> 'exchange_rate_timestamp')
+    || jsonb_build_object('exchange_rate_source', old_json -> 'exchange_rate_source')
+    || jsonb_build_object('entered_amount', old_json -> 'entered_amount')
+    || jsonb_build_object('settlement_asset', old_json -> 'settlement_asset');
 
   RETURN jsonb_populate_record(NEW, new_json);
 END;

@@ -1,3 +1,5 @@
+import type { ExpenseCategory } from "@/lib/expense/categories";
+
 export type SplitMode = "equal" | "custom";
 
 export interface Member {
@@ -40,11 +42,25 @@ export interface Expense {
   exchangeRate?: string;
   /** ISO timestamp of the `exchangeRate` quote, for provenance. */
   exchangeRateTimestamp?: string;
+  /** Provider that produced `exchangeRate` (e.g. "coingecko"). */
+  exchangeRateSource?: string;
+  /**
+   * The amount exactly as the user typed it, in `currency`. `totalAmount` is
+   * this converted at `exchangeRate`. Absent on rows created before #323.
+   */
+  enteredAmount?: string;
   /**
    * Canonical Stellar asset this expense settles in ("native", "USDC:GA5Z…").
    * Absent on rows created before multi-asset support, which all settle native.
    */
   settlementAsset?: string | null;
+  /**
+   * One of `EXPENSE_CATEGORIES` (lib/expense/categories.ts). Absent on
+   * uncategorized expenses, which includes every row created before #317.
+   */
+  category?: ExpenseCategory | null;
+  /** Normalized labels (see lib/expense/tags.ts); organization only, never money. */
+  tags?: string[];
   splitMode: SplitMode;
   paidByMemberId: string;
   members: Member[];

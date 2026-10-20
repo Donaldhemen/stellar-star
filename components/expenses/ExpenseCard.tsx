@@ -5,10 +5,13 @@ import { AnimatePresence, motion } from "framer-motion";
 import { ChevronRight, ReceiptText, Trash2 } from "lucide-react";
 import { PaymentStatus } from "@/components/payment/PaymentStatus";
 import { SplitCalculator } from "@/components/expenses/SplitCalculator";
+import { ExpenseReceipts } from "@/components/expenses/ExpenseReceipts";
 import { usePayment } from "@/hooks/usePayment";
+import { categoryLabel } from "@/lib/expense/categories";
 import type { Expense, SplitShare } from "@/types/expense";
 
 import { Money } from "@/components/ui/Money";
+import { describeSavedConversion, enteredAmountOf } from "@/lib/fx/quoteLock";
 
 interface ExpenseCardProps {
   expense: Expense;
@@ -43,10 +46,9 @@ export function ExpenseCard({ expense, currentUserPublicKey, onDelete, tripId }:
     !!payer?.walletAddress &&
     payer.walletAddress === currentUserPublicKey;
 
-  const fiatAmount =
-    expense.currency !== "XLM" && expense.exchangeRate
-      ? parseFloat(expense.totalAmount) / parseFloat(expense.exchangeRate)
-      : null;
+  // Exact: the saved entered amount, or an exact BigInt reconstruction for
+  // rows saved before #323. Never float division.
+  const fiatAmount = enteredAmountOf(expense);
 
   const handlePay = async (share: SplitShare) => {
     setPayingShareId(share.memberId);
@@ -88,6 +90,21 @@ export function ExpenseCard({ expense, currentUserPublicKey, onDelete, tripId }:
               )}
               <span>&middot; {expense.members.length} members &middot; {createdAt}</span>
             </p>
+            {(expense.category || (expense.tags?.length ?? 0) > 0) && (
+              <p className="mt-1 flex flex-wrap items-center gap-1 text-[10px]">
+                {expense.category && (
+                  <span className="rounded-full bg-[#F0F0F0] px-2 py-0.5 font-semibold text-[#444]">
+                    <span className="sr-only">Category: </span>
+                    {categoryLabel(expense.category)}
+                  </span>
+                )}
+                {expense.tags?.map((tag) => (
+                  <span key={tag} className="rounded-full border border-[#E5E5E5] px-2 py-0.5 text-[#666]">
+                    <span className="sr-only">Tag: </span>#{tag}
+                  </span>
+                ))}
+              </p>
+            )}
           </div>
         </div>
 
@@ -128,6 +145,10 @@ export function ExpenseCard({ expense, currentUserPublicKey, onDelete, tripId }:
             className="overflow-hidden"
           >
             <div className="px-4 pt-3 pb-4 border-t border-[#F5F5F5]">
+              <p className="mb-3 rounded-lg bg-[#FAFAFA] px-3 py-2 text-[11px] text-[#666]" title="Saved with the expense; cannot be edited">
+                <span className="font-semibold text-[#444]">Exchange rate: </span>
+                {describeSavedConversion(expense)}
+              </p>
               {expense.description && (
                 <p className="text-xs text-[#888] mb-3 leading-relaxed">{expense.description}</p>
               )}
@@ -155,6 +176,12 @@ export function ExpenseCard({ expense, currentUserPublicKey, onDelete, tripId }:
                   />
                 </div>
               )}
+
+              <ExpenseReceipts
+                expenseId={expense.id}
+                canUpload={isOwner}
+                currentUserPublicKey={currentUserPublicKey}
+              />
 
               <ExpenseCardFooter
                 expense={expense}
