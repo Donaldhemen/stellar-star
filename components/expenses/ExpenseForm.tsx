@@ -1,5 +1,10 @@
 "use client";
 
+import { useState } from "react";
+import { ExpenseLabelsFields } from "@/components/expenses/ExpenseLabelsFields";
+import { ReceiptCapture } from "@/components/expenses/ReceiptCapture";
+import { ReceiptAttachmentStep } from "@/components/expenses/ReceiptAttachmentStep";
+import { canUseReceiptDraft, receiptDraftDescription } from "@/lib/receipts/ocr/review";
 import { Input } from "@/components/ui/Input";
 import { ExpenseDescriptionField } from "@/components/expenses/ExpenseDescriptionField";
 import { ExpenseFormActions } from "@/components/expenses/ExpenseFormActions";
@@ -29,16 +34,45 @@ export function ExpenseForm({
   defaultMembers,
   initialValues,
 }: ExpenseFormProps) {
+  const [capturing, setCapturing] = useState(false);
+  const [receipt, setReceipt] = useState<File | null>(null);
+  const [createdId, setCreatedId] = useState<string | null>(null);
   const form = useExpenseForm({
-    onSuccess,
+    beforeCreate: () => !capturing && !createdId,
+    onSuccess: (id) => {
+      if (receipt && id) setCreatedId(id);
+      else onSuccess?.(id);
+    },
     currentUserPublicKey,
     currentUserName,
     defaultMembers,
     initialValues,
   });
 
+  if (createdId && receipt) return <ReceiptAttachmentStep expenseId={createdId} file={receipt}
+    onDone={() => { setReceipt(null); onSuccess?.(createdId); }} />;
+
   return (
     <form onSubmit={form.handleSubmit} className="space-y-5">
+      {process.env.NEXT_PUBLIC_RECEIPT_OCR_ENABLED === "true" && <>
+        {capturing ? <ReceiptCapture onCancel={() => setCapturing(false)} onUse={(draft, file) => {
+          if (!canUseReceiptDraft(draft)) return;
+          form.setTitle(draft.fields.merchant.value.trim());
+          form.setTotalAmount(draft.fields.total.value);
+          form.setCurrency(draft.fields.currency.value);
+          form.setDescription(receiptDraftDescription(draft));
+          setReceipt(file);
+          setCapturing(false);
+        }} /> : <button type="button" disabled={form.submitting} onClick={() => setCapturing(true)}>
+          {receipt ? "Replace receipt draft" : "Capture or select a receipt"}
+        </button>}
+        {receipt && !capturing && <div className="space-y-2 text-sm">
+          <p>Receipt fields reviewed. Creating the expense will attach the unchanged original privately.
+            This draft is held only in this screen; closing it discards the photo.</p>
+          <button type="button" disabled={form.submitting} onClick={() => setReceipt(null)}>Remove original from draft</button>
+        </div>}
+      </>}
+      <fieldset disabled={capturing || form.submitting} className="space-y-5 border-0 p-0 min-w-0">
       <Input
         label="Expense title"
         required
@@ -121,6 +155,7 @@ export function ExpenseForm({
       />
 
       <ExpenseFormActions submitting={form.submitting} onCancel={onCancel} />
+      </fieldset>
     </form>
   );
 }
