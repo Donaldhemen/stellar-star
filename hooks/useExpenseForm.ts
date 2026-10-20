@@ -55,6 +55,8 @@ async function lockQuote(currency: string): Promise<LockedQuote | null> {
 }
 
 export interface UseExpenseFormOptions {
+  /** Optional review gate for receipt-assisted drafts. */
+  beforeCreate?: () => boolean;
   onSuccess?: (expenseId?: string) => void;
   currentUserPublicKey?: string | null;
   currentUserName?: string | null;
@@ -132,6 +134,7 @@ export function validateExpenseFormFields({
 
 
 export function useExpenseForm({
+  beforeCreate,
   onSuccess,
   currentUserPublicKey,
   currentUserName,
@@ -160,6 +163,7 @@ export function useExpenseForm({
       : initialMembersRef.current![0]?.id ?? "",
   );
   const [submitting, setSubmitting] = useState(false);
+  const saveInFlight = useRef(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   // ── Locked FX quote (#323) ────────────────────────────────────────────────
@@ -267,8 +271,10 @@ export function useExpenseForm({
   const handleSubmit = useCallback(
     async (event: FormEvent) => {
       event.preventDefault();
+      if (saveInFlight.current || (beforeCreate && !beforeCreate())) return;
       if (!validate()) return;
 
+      saveInFlight.current = true;
       setSubmitting(true);
       try {
         const cleanMembers = members.map((member) => ({
@@ -343,6 +349,7 @@ export function useExpenseForm({
           toastError("Error", raw);
         }
       } finally {
+        saveInFlight.current = false;
         setSubmitting(false);
       }
     },
@@ -353,6 +360,7 @@ export function useExpenseForm({
     // entirely and persisted the typed amount tagged XLM.
     [
       addExpense,
+      beforeCreate,
       category,
       currency,
       description,
