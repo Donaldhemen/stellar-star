@@ -66,6 +66,7 @@ export default function TripsPage() {
   const { expenses } = useExpense();
   const { publicKey } = useWallet();
   const { user } = useAuth();
+  const { contacts } = useContacts();
   const { success: toastSuccess, error: toastError } = useToast();
   const [showForm, setShowForm] = useState(false);
   const [showCopy, setShowCopy] = useState(false);
