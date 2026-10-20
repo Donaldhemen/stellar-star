@@ -39,6 +39,12 @@ export type ExpenseRow = {
   currency: string;
   exchange_rate: string | null;
   exchange_rate_timestamp: string | null;
+  /** Canonical Stellar asset key; NULL means native XLM (every pre-#317 row). Frozen on update. */
+  settlement_asset: string | null;
+  /** Checked against EXPENSE_CATEGORIES by `expenses_category_check`. */
+  category: string | null;
+  /** Normalized by the `trg_05_expenses_normalize_labels` trigger. */
+  tags: string[];
   split_mode: "equal" | "custom";
   paid_by_member_id: string;
   members: Json;
@@ -181,16 +187,22 @@ export type Database = {
       };
       expenses: {
         Row: ExpenseRow;
-        Insert: Omit<ExpenseRow, ServerManaged | "version"> & {
+        Insert: Omit<
+          ExpenseRow,
+          ServerManaged | "version" | "settlement_asset" | "category" | "tags"
+        > & {
           id?: string;
           created_at?: string;
           currency?: string;
           settled?: boolean;
           version?: number;
+          settlement_asset?: string | null;
+          category?: string | null;
+          tags?: string[];
         };
-        // `created_by_wallet` and the amount/rate fields are absent by design:
-        // the database freezes them on update.
-        Update: Partial<Omit<ExpenseRow, ServerManaged | "created_by_wallet" | "total_amount" | "currency" | "exchange_rate" | "exchange_rate_timestamp">>;
+        // `created_by_wallet` and the amount/rate/asset fields are absent by
+        // design: the database freezes them on update.
+        Update: Partial<Omit<ExpenseRow, ServerManaged | "created_by_wallet" | "total_amount" | "currency" | "exchange_rate" | "exchange_rate_timestamp" | "settlement_asset">>;
         Relationships: [];
       };
       trips: {
@@ -383,6 +395,23 @@ export type Database = {
         Args: {
           p_updates: Json;
           p_tx_hash: string;
+        };
+        Returns: ExpenseRow[];
+      };
+      search_expenses: {
+        Args: {
+          p_trip_id: string | null;
+          p_terms: string[] | null;
+          p_category: string | null;
+          p_tags: string[] | null;
+          p_payer: string | null;
+          p_status: string | null;
+          p_asset: string | null;
+          p_from: string | null;
+          p_to: string | null;
+          p_cursor_created_at: string | null;
+          p_cursor_id: string | null;
+          p_limit: number;
         };
         Returns: ExpenseRow[];
       };

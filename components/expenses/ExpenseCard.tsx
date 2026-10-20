@@ -6,6 +6,7 @@ import { ChevronRight, ReceiptText, Trash2 } from "lucide-react";
 import { PaymentStatus } from "@/components/payment/PaymentStatus";
 import { SplitCalculator } from "@/components/expenses/SplitCalculator";
 import { usePayment } from "@/hooks/usePayment";
+import { categoryLabel } from "@/lib/expense/categories";
 import type { Expense, SplitShare } from "@/types/expense";
 
 import { Money } from "@/components/ui/Money";
@@ -88,6 +89,21 @@ export function ExpenseCard({ expense, currentUserPublicKey, onDelete, tripId }:
               )}
               <span>&middot; {expense.members.length} members &middot; {createdAt}</span>
             </p>
+            {(expense.category || (expense.tags?.length ?? 0) > 0) && (
+              <p className="mt-1 flex flex-wrap items-center gap-1 text-[10px]">
+                {expense.category && (
+                  <span className="rounded-full bg-[#F0F0F0] px-2 py-0.5 font-semibold text-[#444]">
+                    <span className="sr-only">Category: </span>
+                    {categoryLabel(expense.category)}
+                  </span>
+                )}
+                {expense.tags?.map((tag) => (
+                  <span key={tag} className="rounded-full border border-[#E5E5E5] px-2 py-0.5 text-[#666]">
+                    <span className="sr-only">Tag: </span>#{tag}
+                  </span>
+                ))}
+              </p>
+            )}
           </div>
         </div>
 
