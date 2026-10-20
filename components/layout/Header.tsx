@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { Menu, X, LogOut, User, LayoutDashboard, Receipt, Map, ChevronDown, Copy, BarChart2 } from "lucide-react";
+import { Menu, X, LogOut, User, LayoutDashboard, Receipt, Map, ChevronDown, Copy, BarChart2, Code } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import { useAuth } from "@/context/AuthContext";
 import { cn, formatAddress, copyToClipboard } from "@/lib/utils";
@@ -203,6 +203,14 @@ export default function Header() {
                               <BarChart2 size={16} className="text-[#555]" />
                               Analytics
                             </Link>
+                            <Link
+                              href="/developer"
+                              onClick={() => setUserMenuOpen(false)}
+                              className="flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-[#0F0F14] hover:bg-[#F6F6F6] rounded-xl transition-all"
+                            >
+                              <Code size={16} className="text-[#555]" />
+                              Developer API
+                            </Link>
                           </div>
 
                           {/* Logout */}
@@ -334,6 +342,14 @@ export default function Header() {
                   >
                     <BarChart2 size={16} className="text-[#555]" />
                     Analytics
+                  </Link>
+                  <Link
+                    href="/developer"
+                    onClick={() => setMobileOpen(false)}
+                    className="flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-[#0F0F14] hover:bg-black/5 rounded-xl transition-all"
+                  >
+                    <Code size={16} className="text-[#555]" />
+                    Developer API
                   </Link>
                   <button
                     onClick={handleSignOut}

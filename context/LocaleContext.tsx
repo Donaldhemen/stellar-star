@@ -13,6 +13,7 @@ import {
   type ParseAmountResult,
   formatLocaleDate,
   formatLocaleDateTime,
+  PRESET_OPTIONS,
   type DateFormatStyle,
 } from "@/lib/i18n";
 
@@ -21,15 +22,18 @@ export { SUPPORTED_LOCALES };
 
 interface LocaleContextType {
   locale: Locale;
+  stableLocale: Locale;
+  isHydrated: boolean;
   setLocale: (locale: Locale) => void;
   isRTL: boolean;
   dir: "rtl" | "ltr";
   t: (key: string, params?: Record<string, string | number>) => string;
   formatDate: (
     date: Date | string | number,
-    options?: Intl.DateTimeFormatOptions | DateFormatStyle
+    options?: Intl.DateTimeFormatOptions | DateFormatStyle,
+    freezeTimestamp?: boolean
   ) => string;
-  formatDateTime: (date: Date | string | number) => string;
+  formatDateTime: (date: Date | string | number, freezeTimestamp?: boolean) => string;
   parseAmount: (input: string) => ParseAmountResult;
 }
 
@@ -39,8 +43,10 @@ const VALID_LOCALES: Locale[] = ["en-US", "de-DE", "hi-IN", "ja-JP", "ar-SA", "q
 
 export function LocaleProvider({ children }: { children: React.ReactNode }) {
   const [locale, setLocale] = useState<Locale>(DEFAULT_LOCALE);
+  const [isHydrated, setIsHydrated] = useState<boolean>(false);
 
   useEffect(() => {
+    setIsHydrated(true);
     const saved = localStorage.getItem("stellar-star-locale") as Locale;
     if (saved && VALID_LOCALES.includes(saved)) {
       setLocale(saved);
@@ -83,38 +89,71 @@ export function LocaleProvider({ children }: { children: React.ReactNode }) {
 
   const t = useCallback(
     (key: string, params?: Record<string, string | number>) => {
-      return translate(locale, key, params);
+      // Defer client-only translations until after hydration to prevent SSR mismatch
+      const activeLocale = isHydrated ? locale : DEFAULT_LOCALE;
+      return translate(activeLocale, key, params);
     },
-    [locale]
+    [locale, isHydrated]
   );
 
   const formatDate = useCallback(
     (
       date: Date | string | number,
-      options?: Intl.DateTimeFormatOptions | DateFormatStyle
+      options?: Intl.DateTimeFormatOptions | DateFormatStyle,
+      freezeTimestamp?: boolean
     ) => {
-      return formatLocaleDate(date, locale, options);
+      const activeLocale = isHydrated ? locale : DEFAULT_LOCALE;
+      const shouldFreezeTimezone = freezeTimestamp ?? !isHydrated;
+
+      let resolvedOptions: Intl.DateTimeFormatOptions;
+      if (typeof options === "string") {
+        resolvedOptions = { ...(PRESET_OPTIONS[options] ?? PRESET_OPTIONS.medium) };
+      } else if (options) {
+        resolvedOptions = { ...options };
+      } else {
+        resolvedOptions = { ...PRESET_OPTIONS.medium };
+      }
+
+      // Freeze timezone to UTC during initial SSR/hydration pass to ensure identical output
+      if (shouldFreezeTimezone && !resolvedOptions.timeZone) {
+        resolvedOptions.timeZone = "UTC";
+      }
+
+      return formatLocaleDate(date, activeLocale, resolvedOptions);
     },
-    [locale]
+    [locale, isHydrated]
   );
 
   const formatDateTime = useCallback(
-    (date: Date | string | number) => {
-      return formatLocaleDateTime(date, locale);
+    (date: Date | string | number, freezeTimestamp?: boolean) => {
+      const activeLocale = isHydrated ? locale : DEFAULT_LOCALE;
+      const shouldFreezeTimezone = freezeTimestamp ?? !isHydrated;
+      const options: Intl.DateTimeFormatOptions = {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        ...(shouldFreezeTimezone ? { timeZone: "UTC" } : {}),
+      };
+      return formatLocaleDate(date, activeLocale, options);
     },
-    [locale]
+    [locale, isHydrated]
   );
 
   const parseAmount = useCallback(
     (input: string) => {
-      return parseLocaleAmount(input, locale);
+      const activeLocale = isHydrated ? locale : DEFAULT_LOCALE;
+      return parseLocaleAmount(input, activeLocale);
     },
-    [locale]
+    [locale, isHydrated]
   );
 
   const contextValue = useMemo<LocaleContextType>(
     () => ({
       locale,
+      stableLocale: DEFAULT_LOCALE,
+      isHydrated,
       setLocale: handleSetLocale,
       isRTL,
       dir,
@@ -123,7 +162,7 @@ export function LocaleProvider({ children }: { children: React.ReactNode }) {
       formatDateTime,
       parseAmount,
     }),
-    [locale, handleSetLocale, isRTL, dir, t, formatDate, formatDateTime, parseAmount]
+    [locale, isHydrated, handleSetLocale, isRTL, dir, t, formatDate, formatDateTime, parseAmount]
   );
 
   return <LocaleContext.Provider value={contextValue}>{children}</LocaleContext.Provider>;
@@ -135,6 +174,8 @@ export function useLocale(): LocaleContextType {
     // Safe default fallback for tests, SSR or static generation
     return {
       locale: DEFAULT_LOCALE,
+      stableLocale: DEFAULT_LOCALE,
+      isHydrated: true,
       setLocale: () => {},
       isRTL: false,
       dir: "ltr",
@@ -142,10 +183,24 @@ export function useLocale(): LocaleContextType {
         translate(DEFAULT_LOCALE, key, params),
       formatDate: (
         date: Date | string | number,
-        options?: Intl.DateTimeFormatOptions | DateFormatStyle
-      ) => formatLocaleDate(date, DEFAULT_LOCALE, options),
-      formatDateTime: (date: Date | string | number) =>
-        formatLocaleDateTime(date, DEFAULT_LOCALE),
+        options?: Intl.DateTimeFormatOptions | DateFormatStyle,
+        freezeTimestamp?: boolean
+      ) => {
+        const opts = typeof options === "string" ? PRESET_OPTIONS[options] : options;
+        return formatLocaleDate(date, DEFAULT_LOCALE, {
+          ...(opts ?? PRESET_OPTIONS.medium),
+          ...(freezeTimestamp ? { timeZone: "UTC" } : {}),
+        });
+      },
+      formatDateTime: (date: Date | string | number, freezeTimestamp?: boolean) =>
+        formatLocaleDate(date, DEFAULT_LOCALE, {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+          ...(freezeTimestamp ? { timeZone: "UTC" } : {}),
+        }),
       parseAmount: (input: string) => parseLocaleAmount(input, DEFAULT_LOCALE),
     };
   }
