@@ -66,6 +66,21 @@ export type TripRow = {
   updated_at: string;
 };
 
+export type ExportAuditEventRow = {
+  id: string;
+  actor_wallet: string;
+  export_kind: "archive";
+  status: "served" | "rate_limited" | "forbidden" | "failed";
+  trip_ids: string[];
+  trip_count: number;
+  expense_count: number;
+  byte_size: number;
+  content_sha256: string | null;
+  request_id: string | null;
+  client_ip_hash: string | null;
+  created_at: string;
+};
+
 export type AuthChallengeRow = {
   nonce: string;
   address: string;
@@ -202,6 +217,14 @@ export type Database = {
           settled?: boolean;
         };
         Update: Partial<Omit<TripRow, ServerManaged | "created_by_wallet">>;
+        Relationships: [];
+      };
+      export_audit_events: {
+        Row: ExportAuditEventRow;
+        Insert: Pick<ExportAuditEventRow, "actor_wallet" | "export_kind" | "status"> &
+          Partial<Omit<ExportAuditEventRow, "id" | "created_at" | "actor_wallet" | "export_kind" | "status">>;
+        // Append-only: no UPDATE policy exists.
+        Update: Record<string, never>;
         Relationships: [];
       };
       trip_invites: {

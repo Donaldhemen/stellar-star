@@ -16,6 +16,7 @@ import { TripNotFound } from "@/components/trips/TripNotFound";
 import { TripPaymentProgressBanner } from "@/components/trips/TripPaymentProgressBanner";
 import { TripTabs, type TripTab } from "@/components/trips/TripTabs";
 import { InviteMemberModal } from "@/components/trips/InviteMemberModal";
+import { TripExportMenu } from "@/components/export/TripExportMenu";
 import { useAuth } from "@/context/AuthContext";
 import { useContractEvents } from "@/hooks/useContractEvents";
 import { useExpense } from "@/hooks/useExpense";
@@ -141,6 +142,7 @@ export default function TripDetailPage() {
             onOpenInvite={() => setShowInviteModal(true)}
           />
           {publicKey && <TripPaymentProgressBanner shares={myShares} />}
+          <TripExportMenu trip={trip} expenses={tripExpenses} />
           <TripTabs activeTab={activeTab} onChange={setActiveTab} />
 
           <AnimatePresence mode="wait">
