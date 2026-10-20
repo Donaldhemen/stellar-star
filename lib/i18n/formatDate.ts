@@ -3,7 +3,7 @@ import { isPseudoLocale, pseudoLocalize } from "./pseudo";
 
 export type DateFormatStyle = "short" | "medium" | "long" | "full";
 
-const PRESET_OPTIONS: Record<DateFormatStyle, Intl.DateTimeFormatOptions> = {
+export const PRESET_OPTIONS: Record<DateFormatStyle, Intl.DateTimeFormatOptions> = {
   short: { month: "numeric", day: "numeric", year: "numeric" },
   medium: { month: "short", day: "numeric", year: "numeric" },
   long: { month: "long", day: "numeric", year: "numeric" },
