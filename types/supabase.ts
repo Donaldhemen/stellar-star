@@ -66,6 +66,37 @@ export type TripRow = {
   updated_at: string;
 };
 
+export type ContactRow = {
+  id: string;
+  owner_wallet: string;
+  display_name: string;
+  wallet_address: string | null;
+  wallet_verified: boolean;
+  claimed_by_wallet: string | null;
+  verified_at: string | null;
+  invite_destination: string | null;
+  invite_channel: "email" | "phone" | "other" | null;
+  claim_token_hash: string | null;
+  claim_expires_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ContactWalletChangeRow = {
+  id: string;
+  contact_id: string;
+  owner_wallet: string;
+  contact_name: string;
+  old_wallet: string | null;
+  new_wallet: string;
+  status: "pending_notice" | "applied" | "cancelled";
+  affected_trip_ids: string[];
+  notice_until: string;
+  verified: boolean;
+  created_at: string;
+  applied_at: string | null;
+};
+
 export type AuthChallengeRow = {
   nonce: string;
   address: string;
@@ -202,6 +233,32 @@ export type Database = {
           settled?: boolean;
         };
         Update: Partial<Omit<TripRow, ServerManaged | "created_by_wallet">>;
+        Relationships: [];
+      };
+      contacts: {
+        Row: ContactRow;
+        // Verification columns are set only by claim_contact_profile; the
+        // guard trigger resets them on any direct write.
+        Insert: Pick<ContactRow, "owner_wallet" | "display_name"> &
+          Partial<
+            Pick<
+              ContactRow,
+              "id" | "wallet_address" | "invite_destination" | "invite_channel" | "claim_token_hash" | "claim_expires_at"
+            >
+          >;
+        Update: Partial<
+          Pick<
+            ContactRow,
+            "display_name" | "wallet_address" | "invite_destination" | "invite_channel" | "claim_token_hash" | "claim_expires_at"
+          >
+        >;
+        Relationships: [];
+      };
+      contact_wallet_changes: {
+        Row: ContactWalletChangeRow;
+        // Written only by the SECURITY DEFINER functions.
+        Insert: Record<string, never>;
+        Update: Record<string, never>;
         Relationships: [];
       };
       trip_invites: {
@@ -386,6 +443,22 @@ export type Database = {
         };
         Returns: ExpenseRow[];
       };
+      request_contact_wallet_change: {
+        Args: { p_contact_id: string; p_new_wallet: string };
+        Returns: ContactWalletChangeRow[];
+      };
+      apply_contact_wallet_change: {
+        Args: { p_change_id: string };
+        Returns: ContactRow[];
+      };
+      cancel_contact_wallet_change: {
+        Args: { p_change_id: string };
+        Returns: ContactWalletChangeRow[];
+      };
+      claim_contact_profile: {
+        Args: { p_token_hash: string };
+        Returns: Json;
+      };
     };
     Enums: { [_ in never]: never };
     CompositeTypes: { [_ in never]: never };
@@ -408,3 +481,5 @@ export type SponsoredAccountInsert = Database["public"]["Tables"]["sponsored_acc
 export type SponsoredAccountUpdate = Database["public"]["Tables"]["sponsored_accounts"]["Update"];
 export type SponsorshipInviteInsert = Database["public"]["Tables"]["sponsorship_invites"]["Insert"];
 export type TripInviteInsert = Database["public"]["Tables"]["trip_invites"]["Insert"];
+export type ContactInsert = Database["public"]["Tables"]["contacts"]["Insert"];
+export type ContactUpdate = Database["public"]["Tables"]["contacts"]["Update"];

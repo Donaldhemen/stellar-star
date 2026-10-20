@@ -3,9 +3,11 @@
 import React, { useState } from "react";
 import { Plus, Trash2, UserPlus } from "lucide-react";
 import type { Member } from "@/types/expense";
+import type { Contact } from "@/types/contact";
 import type { TripFormData } from "@/types/trip";
 import { Input } from "@/components/ui/Input";
 import { findDuplicateWalletErrors, isValidStellarAddress } from "@/lib/split/calculator";
+import { canonicalWallet, contactToMember, walletTrust } from "@/lib/contacts/contacts";
 import { cn } from "@/lib/utils";
 
 interface TripFormProps {
@@ -16,6 +18,8 @@ interface TripFormProps {
   currentUserPublicKey?: string | null;
   /** Prefill the first member's name from authenticated user */
   currentUserName?: string | null;
+  /** The user's saved contacts, offered as one-click members. */
+  contacts?: Contact[];
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -26,7 +30,14 @@ function createMember(name = ""): Member {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function TripForm({ onSubmit, onCancel, initialData, currentUserPublicKey, currentUserName }: TripFormProps) {
+export function TripForm({
+  onSubmit,
+  onCancel,
+  initialData,
+  currentUserPublicKey,
+  currentUserName,
+  contacts = [],
+}: TripFormProps) {
   const [name, setName] = useState(initialData?.name ?? "");
   const [description, setDescription] = useState(initialData?.description ?? "");
   const [members, setMembers] = useState<Member[]>(() => {
@@ -54,6 +65,21 @@ export function TripForm({ onSubmit, onCancel, initialData, currentUserPublicKey
   };
 
   const addMember = () => setMembers((prev) => [...prev, createMember()]);
+
+  /** Fills the first empty row (or appends one) from a saved contact. */
+  const addFromContact = (contactId: string) => {
+    const contact = contacts.find((c) => c.id === contactId);
+    if (!contact) return;
+    setMembers((prev) => {
+      const wallet = canonicalWallet(contact.walletAddress);
+      // Same wallet already present: duplicates are identified by address.
+      if (wallet && prev.some((m) => canonicalWallet(m.walletAddress) === wallet)) return prev;
+      const member = contactToMember(contact);
+      const emptyIndex = prev.findIndex((m) => !m.name.trim() && !m.walletAddress?.trim());
+      if (emptyIndex === -1) return [...prev, member];
+      return prev.map((m, i) => (i === emptyIndex ? { ...member, id: m.id } : m));
+    });
+  };
 
   const removeMember = (id: string) => {
     if (members.length <= 2) return;
@@ -144,6 +170,26 @@ export function TripForm({ onSubmit, onCancel, initialData, currentUserPublicKey
 
         {errors.members && (
           <p className="text-xs text-red-500 mb-2">{errors.members}</p>
+        )}
+
+        {contacts.length > 0 && (
+          <select
+            aria-label="Add from contacts"
+            value=""
+            onChange={(e) => addFromContact(e.target.value)}
+            className="mb-2 w-full rounded-xl border border-[#E5E5E5] bg-white px-3 py-2.5 text-sm text-[#555]"
+          >
+            <option value="">Add from contacts…</option>
+            {contacts.map((contact) => {
+              const trust = walletTrust(contact);
+              return (
+                <option key={contact.id} value={contact.id}>
+                  {contact.displayName}
+                  {trust === "verified" ? " ✓ verified wallet" : trust === "unverified" ? " (unverified wallet)" : " (no wallet)"}
+                </option>
+              );
+            })}
+          </select>
         )}
 
         <div className="space-y-2">

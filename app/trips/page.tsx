@@ -6,6 +6,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Plus, ArrowLeft, Map, Inbox } from "lucide-react";
 import { useTripSearch } from "@/hooks/useTrip";
 import { useExpense } from "@/hooks/useExpense";
+import { useContacts } from "@/hooks/useContacts";
 import { useWallet } from "@/hooks/useWallet";
 import { useAuth } from "@/context/AuthContext";
 import { ConnectWalletButton } from "@/components/wallet/ConnectWalletButton";
@@ -59,6 +60,8 @@ export default function TripsPage() {
   const { success: toastSuccess, error: toastError } = useToast();
   const [showForm, setShowForm] = useState(false);
   const [creating, setCreating] = useState(false);
+  // Loaded only while the new-trip form is open.
+  const { contacts } = useContacts(showForm);
  
   const handleDeleteTrip = async (id: string) => {
     try {
@@ -222,6 +225,7 @@ export default function TripsPage() {
         <TripForm
           currentUserPublicKey={publicKey}
           currentUserName={user?.displayName}
+          contacts={contacts}
           onSubmit={handleCreate}
           onCancel={() => setShowForm(false)}
         />
