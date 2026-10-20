@@ -12,6 +12,7 @@ import type { Expense, SplitShare } from "@/types/expense";
 
 import { Money } from "@/components/ui/Money";
 import { describeSavedConversion, enteredAmountOf } from "@/lib/fx/quoteLock";
+import { settlementAssetOf } from "@/lib/settlement/expenseAsset";
 
 interface ExpenseCardProps {
   expense: Expense;
@@ -50,13 +51,17 @@ export function ExpenseCard({ expense, currentUserPublicKey, onDelete, tripId }:
   // rows saved before #323. Never float division.
   const fiatAmount = enteredAmountOf(expense);
 
-  const handlePay = async (share: SplitShare) => {
+  const handlePay = async (share: SplitShare, amount?: string) => {
     setPayingShareId(share.memberId);
+    // Pay against the stored share, not the display-adjusted copy the
+    // calculator renders, so the remaining balance is computed exactly.
+    const stored = expense.shares.find((s) => s.memberId === share.memberId) ?? share;
     await payShare({
-      share,
+      share: stored,
       expenseTitle: expense.title,
       payerWalletAddress: payer?.walletAddress ?? "",
       tripId,
+      amount,
     });
     setPayingShareId(null);
   };
@@ -165,6 +170,9 @@ export function ExpenseCard({ expense, currentUserPublicKey, onDelete, tripId }:
                 poolBalance={poolBalance}
                 depositLoading={depositLoading}
                 onDepositPool={depositPool}
+                paymentRequest={
+                  tripId ? { tripId, expenseId: expense.id, asset: settlementAssetOf(expense) } : undefined
+                }
               />
 
               {paymentState.status !== "idle" && (
