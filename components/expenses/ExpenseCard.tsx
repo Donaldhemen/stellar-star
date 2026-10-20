@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { ChevronRight, ReceiptText, Trash2 } from "lucide-react";
 import { PaymentStatus } from "@/components/payment/PaymentStatus";
 import { SplitCalculator } from "@/components/expenses/SplitCalculator";
+import { ExpenseReceipts } from "@/components/expenses/ExpenseReceipts";
 import { usePayment } from "@/hooks/usePayment";
 import { categoryLabel } from "@/lib/expense/categories";
 import type { Expense, SplitShare } from "@/types/expense";
@@ -171,6 +172,12 @@ export function ExpenseCard({ expense, currentUserPublicKey, onDelete, tripId }:
                   />
                 </div>
               )}
+
+              <ExpenseReceipts
+                expenseId={expense.id}
+                canUpload={isOwner}
+                currentUserPublicKey={currentUserPublicKey}
+              />
 
               <ExpenseCardFooter
                 expense={expense}
