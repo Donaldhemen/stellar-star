@@ -26,6 +26,7 @@ import {
 import { Money } from "@/lib/money";
 import { isExpenseCategory, type ExpenseCategory } from "@/lib/expense/categories";
 import { parseTagInput, validateTags } from "@/lib/expense/tags";
+import { trackAnalyticsEvent } from "@/lib/analytics/sink";
 
 /** Prefill for the form, e.g. from a trip's recurring expense rule. */
 export interface ExpenseFormInitialValues {
@@ -342,6 +343,12 @@ export function useExpenseForm({
         };
 
         await addExpense(expense);
+        trackAnalyticsEvent("expense_created", {
+          currency: currency.toUpperCase(),
+          split_mode: splitMode,
+          member_count: cleanMembers.length,
+          has_receipt: false,
+        });
         toastSuccess("Expense created!", `"${expense.title}" split among ${cleanMembers.length} members.`);
         onSuccess?.(expense.id);
       } catch (err: unknown) {
