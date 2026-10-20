@@ -39,6 +39,10 @@ export type ExpenseRow = {
   currency: string;
   exchange_rate: string | null;
   exchange_rate_timestamp: string | null;
+  /** Provenance columns from migration 0010; frozen after insert. */
+  exchange_rate_source: string | null;
+  entered_amount: string | null;
+  settlement_asset: string;
   split_mode: "equal" | "custom";
   paid_by_member_id: string;
   members: Json;
@@ -181,16 +185,35 @@ export type Database = {
       };
       expenses: {
         Row: ExpenseRow;
-        Insert: Omit<ExpenseRow, ServerManaged | "version"> & {
+        Insert: Omit<
+          ExpenseRow,
+          ServerManaged | "version" | "exchange_rate_source" | "entered_amount" | "settlement_asset"
+        > & {
           id?: string;
           created_at?: string;
           currency?: string;
           settled?: boolean;
           version?: number;
+          exchange_rate_source?: string | null;
+          entered_amount?: string | null;
+          settlement_asset?: string;
         };
-        // `created_by_wallet` and the amount/rate fields are absent by design:
-        // the database freezes them on update.
-        Update: Partial<Omit<ExpenseRow, ServerManaged | "created_by_wallet" | "total_amount" | "currency" | "exchange_rate" | "exchange_rate_timestamp">>;
+        // `created_by_wallet` and the amount/rate/provenance fields are absent
+        // by design: the database freezes them on update.
+        Update: Partial<
+          Omit<
+            ExpenseRow,
+            | ServerManaged
+            | "created_by_wallet"
+            | "total_amount"
+            | "currency"
+            | "exchange_rate"
+            | "exchange_rate_timestamp"
+            | "exchange_rate_source"
+            | "entered_amount"
+            | "settlement_asset"
+          >
+        >;
         Relationships: [];
       };
       trips: {

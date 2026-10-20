@@ -9,6 +9,7 @@ import { usePayment } from "@/hooks/usePayment";
 import type { Expense, SplitShare } from "@/types/expense";
 
 import { Money } from "@/components/ui/Money";
+import { describeSavedConversion, enteredAmountOf } from "@/lib/fx/quoteLock";
 
 interface ExpenseCardProps {
   expense: Expense;
@@ -43,10 +44,9 @@ export function ExpenseCard({ expense, currentUserPublicKey, onDelete, tripId }:
     !!payer?.walletAddress &&
     payer.walletAddress === currentUserPublicKey;
 
-  const fiatAmount =
-    expense.currency !== "XLM" && expense.exchangeRate
-      ? parseFloat(expense.totalAmount) / parseFloat(expense.exchangeRate)
-      : null;
+  // Exact: the saved entered amount, or an exact BigInt reconstruction for
+  // rows saved before #323. Never float division.
+  const fiatAmount = enteredAmountOf(expense);
 
   const handlePay = async (share: SplitShare) => {
     setPayingShareId(share.memberId);
@@ -128,6 +128,10 @@ export function ExpenseCard({ expense, currentUserPublicKey, onDelete, tripId }:
             className="overflow-hidden"
           >
             <div className="px-4 pt-3 pb-4 border-t border-[#F5F5F5]">
+              <p className="mb-3 rounded-lg bg-[#FAFAFA] px-3 py-2 text-[11px] text-[#666]" title="Saved with the expense; cannot be edited">
+                <span className="font-semibold text-[#444]">Exchange rate: </span>
+                {describeSavedConversion(expense)}
+              </p>
               {expense.description && (
                 <p className="text-xs text-[#888] mb-3 leading-relaxed">{expense.description}</p>
               )}
