@@ -14,6 +14,7 @@ import { ReceiptModal } from "@/components/expenses/ReceiptModal";
 import { trimToMemoBytes } from "@/lib/stellar/buildTransaction";
 import { Money } from "@/components/ui/Money";
 import { RemindButton } from "@/components/reminders/RemindButton";
+import { shareBalance, installmentsOf, planInstallment } from "@/lib/settlement/installments";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

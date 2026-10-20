@@ -9,6 +9,7 @@ import type { ContractPaymentEvent } from "@/types/contract";
 import type { NetPayment, RawDebt } from "@/lib/settlement/netBalance";
 import { computeNetPayments } from "@/lib/settlement/netBalance";
 import { settlementAssetOf } from "@/lib/settlement/expenseAsset";
+import { shareBalance } from "@/lib/settlement/installments";
 import { buildPaymentTransaction, trimToMemoBytes } from "@/lib/stellar/buildTransaction";
 import { submitSignedTransaction } from "@/lib/stellar/submitTransaction";
 import { signXDR } from "@/lib/freighter";

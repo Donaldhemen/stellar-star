@@ -7,6 +7,7 @@ import type { Expense } from "@/types/expense";
 import { cn } from "@/lib/utils";
 
 import { Money } from "@/components/ui/Money";
+import { useLocale } from "@/context/LocaleContext";
 
 interface ExpenseListProps {
   expenses: Expense[];
@@ -14,6 +15,8 @@ interface ExpenseListProps {
 }
 
 export function ExpenseList({ expenses, onSelect }: ExpenseListProps) {
+  const { formatDate } = useLocale();
+
   if (expenses.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-10 px-4 text-center rounded-xl border border-dashed border-[#E5E5E5]">
@@ -28,7 +31,7 @@ export function ExpenseList({ expenses, onSelect }: ExpenseListProps) {
       <AnimatePresence mode="popLayout">
         {expenses.map((expense, i) => {
           const paidCount = expense.shares.filter((s) => s.paid).length;
-          const createdAt = new Date(expense.createdAt).toLocaleDateString("en-US", {
+          const createdAt = formatDate(expense.createdAt, {
             month: "short",
             day: "numeric",
           });

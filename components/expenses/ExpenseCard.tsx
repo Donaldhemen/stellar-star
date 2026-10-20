@@ -11,6 +11,7 @@ import { categoryLabel } from "@/lib/expense/categories";
 import type { Expense, SplitShare } from "@/types/expense";
 
 import { Money } from "@/components/ui/Money";
+import { useLocale } from "@/context/LocaleContext";
 import { describeSavedConversion, enteredAmountOf } from "@/lib/fx/quoteLock";
 import { settlementAssetOf } from "@/lib/settlement/expenseAsset";
 
@@ -35,9 +36,10 @@ export function ExpenseCard({ expense, currentUserPublicKey, onDelete, tripId }:
     depositPool,
   } = usePayment({ expenseId: expense.id });
 
+  const { formatDate } = useLocale();
   const paidCount = expense.shares.filter((share) => share.paid).length;
   const payer = expense.members.find((member) => member.id === expense.paidByMemberId);
-  const createdAt = new Date(expense.createdAt).toLocaleDateString("en-US", {
+  const createdAt = formatDate(expense.createdAt, {
     month: "short",
     day: "numeric",
     year: "numeric",

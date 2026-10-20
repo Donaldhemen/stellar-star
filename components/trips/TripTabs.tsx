@@ -1,8 +1,8 @@
 "use client";
 
-import { Repeat, ReceiptText, Scale } from "lucide-react";
+import { Repeat, ReceiptText, Scale, Luggage } from "lucide-react";
 
-export type TripTab = "expenses" | "settle" | "recurring";
+export type TripTab = "expenses" | "workspace" | "recurring" | "settle";
 
 interface TripTabsProps {
   activeTab: TripTab;
@@ -12,7 +12,7 @@ interface TripTabsProps {
 export function TripTabs({ activeTab, onChange }: TripTabsProps) {
   return (
     <div className="flex gap-1 p-1 bg-[#EBEBEB] rounded-xl mb-5">
-      {(["expenses", "recurring", "settle"] as TripTab[]).map((tab) => (
+      {(["expenses", "workspace", "recurring", "settle"] as TripTab[]).map((tab) => (
         <button
           key={tab}
           type="button"
@@ -28,6 +28,11 @@ export function TripTabs({ activeTab, onChange }: TripTabsProps) {
             <>
               <ReceiptText size={13} />
               Expenses
+            </>
+          ) : tab === "workspace" ? (
+            <>
+              <Luggage size={13} />
+              Workspace
             </>
           ) : tab === "recurring" ? (
             <>
