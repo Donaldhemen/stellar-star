@@ -5,6 +5,7 @@ import { ExpenseLabelsFields } from "@/components/expenses/ExpenseLabelsFields";
 import { ReceiptCapture } from "@/components/expenses/ReceiptCapture";
 import { ReceiptAttachmentStep } from "@/components/expenses/ReceiptAttachmentStep";
 import { canUseReceiptDraft, receiptDraftDescription } from "@/lib/receipts/ocr/review";
+import { RECEIPT_CURRENCIES } from "@/lib/receipts/ocr/parser";
 import { Input } from "@/components/ui/Input";
 import { ExpenseDescriptionField } from "@/components/expenses/ExpenseDescriptionField";
 import { ExpenseFormActions } from "@/components/expenses/ExpenseFormActions";
@@ -82,7 +83,8 @@ export function ExpenseForm({
         error={form.errors.title}
       />
 
-      <ExpenseDescriptionField value={form.description} onChange={form.setDescription} />
+      <ExpenseDescriptionField value={form.description} onChange={form.setDescription}
+        maxLength={receipt ? 12000 : Math.max(100, form.description.length)} />
 
       <ExpenseLabelsFields
         category={form.category}
@@ -110,11 +112,7 @@ export function ExpenseForm({
               onChange={(e) => form.setCurrency(e.target.value)}
               className="bg-transparent text-xs font-semibold text-[#0F0F14] outline-none cursor-pointer"
             >
-              <option value="XLM">XLM</option>
-              <option value="USD">USD</option>
-              <option value="EUR">EUR</option>
-              <option value="GBP">GBP</option>
-              <option value="INR">INR</option>
+              {RECEIPT_CURRENCIES.map((currency) => <option key={currency} value={currency}>{currency}</option>)}
             </select>
           }
         />

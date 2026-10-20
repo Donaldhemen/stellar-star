@@ -1,10 +1,11 @@
 import { suggestion, type ReceiptDraft } from "@/types/receiptDraft";
 import { receiptAmount } from "./amount";
 import { receiptDate } from "./date";
+import { SUPPORTED_CRYPTO, SUPPORTED_FIAT } from "@/lib/fx/currencies";
 
 export const MAX_OCR_LINES = 100;
 export const MAX_LINE_ITEMS = 40;
-export const RECEIPT_CURRENCIES = ["XLM", "USD", "EUR", "GBP", "INR"] as const;
+export const RECEIPT_CURRENCIES = [...SUPPORTED_CRYPTO, ...SUPPORTED_FIAT];
 const SUMMARY = /\b(total|subtotal|tax|vat|change|cash|card|balance|discount|tip|paid|tender|rounding)\b/i;
 
 /** Deliberately conservative receipt heuristics over untrusted OCR text. */
@@ -17,7 +18,8 @@ export function parseReceiptText(text: string, confidence: number): ReceiptDraft
   const dates = [...new Set(lines.flatMap((line) => line.match(/\b\d{4}-\d{2}-\d{2}\b/g) ?? []))]
     .filter((date) => receiptDate(date) !== null);
   // A currency symbol alone is ambiguous (e.g. USD/CAD/AUD all use $).
-  const currencies = [...new Set(lines.join(" ").match(/\b(?:XLM|USD|EUR|GBP|INR)\b/g) ?? [])];
+  const currencies = [...new Set((lines.join(" ").match(/\b[A-Z]{3}\b/g) ?? [])
+    .filter((code) => RECEIPT_CURRENCIES.some((supported) => supported === code)))];
   const merchant = lines[0] && !SUMMARY.test(lines[0]) && !/\d{4}-\d{2}-\d{2}/.test(lines[0])
     ? lines[0] : "";
   const lineItems = lines.slice(1).flatMap((line, index) => {

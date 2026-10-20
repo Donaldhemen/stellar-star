@@ -33,6 +33,7 @@ test("blocks submit during review and creates once before attaching the original
   fireEvent.click(screen.getByText("Apply fixture reviewed draft"));
   expect(addExpense).not.toHaveBeenCalled();
   expect((screen.getByLabelText(/Expense title/) as HTMLInputElement).value).toBe("Cafe");
+  expect((screen.getByPlaceholderText("Add a short note about this expense...") as HTMLTextAreaElement).maxLength).toBe(12000);
   fireEvent.submit(container.querySelector("form")!);
   await screen.findByRole("button", { name: "Continue" });
   expect(addExpense).toHaveBeenCalledTimes(1);

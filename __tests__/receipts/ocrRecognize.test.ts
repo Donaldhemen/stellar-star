@@ -23,7 +23,7 @@ test("uses only same-origin paths, disables persistent cache and releases resour
   }));
   expect(draft.fields.total.value).toBe("12.00");
   expect(terminate).toHaveBeenCalledTimes(1);
-  expect(close).toHaveBeenCalledTimes(1);
+  expect(close).toHaveBeenCalled();
 });
 test("cancels recognition and terminates the worker", async () => {
   recognize.mockReturnValue(new Promise(() => {}));
@@ -34,6 +34,7 @@ test("cancels recognition and terminates the worker", async () => {
   controller.abort();
   await assertion;
   expect(terminate).toHaveBeenCalledTimes(1);
+  expect(close).toHaveBeenCalled();
 });
 test("bounds initialization time and cleans up a worker that initializes late", async () => {
   jest.useFakeTimers();

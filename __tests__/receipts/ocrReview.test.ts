@@ -25,7 +25,7 @@ test("requires list completeness confirmation, including an empty list", () => {
   draft.lineItemsReviewed = true;
   expect(canUseReceiptDraft(draft)).toBe(true);
 });
-test.each([["date", "2026-02-30"], ["total", "0"], ["total", "1e3"], ["currency", "CAD"], ["merchant", " "]] as const)(
+test.each([["date", "2026-02-30"], ["total", "0"], ["total", "1e3"], ["currency", "XYZ"], ["merchant", " "]] as const)(
   "confirmation cannot make invalid %s valid", (key, value) => {
     const draft = reviewed(); draft.fields[key].value = value;
     expect(canUseReceiptDraft(draft)).toBe(false);

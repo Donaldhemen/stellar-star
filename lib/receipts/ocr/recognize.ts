@@ -10,6 +10,8 @@ export async function recognizeReceipt(file: File, signal: AbortSignal, progress
   await validateOcrFile(file);
   if (signal.aborted) throw new Error("Receipt extraction cancelled.");
   let worker: Worker | undefined;
+  let image: ImageBitmap | undefined;
+  let canvas: HTMLCanvasElement | undefined;
   let finished = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let abort = () => {};
@@ -20,11 +22,12 @@ export async function recognizeReceipt(file: File, signal: AbortSignal, progress
   });
   const work = async () => {
     const bitmap = await createImageBitmap(file);
+    image = bitmap;
     try {
       if (finished || signal.aborted) throw new Error("Receipt extraction cancelled.");
       if (bitmap.width * bitmap.height > 25_000_000) throw new Error("Photo resolution is too large. Choose a smaller photo.");
       const scale = Math.min(1, 2400 / Math.max(bitmap.width, bitmap.height));
-      const canvas = document.createElement("canvas");
+      canvas = document.createElement("canvas");
       canvas.width = Math.max(1, Math.round(bitmap.width * scale));
       canvas.height = Math.max(1, Math.round(bitmap.height * scale));
       const context = canvas.getContext("2d");
@@ -60,5 +63,7 @@ export async function recognizeReceipt(file: File, signal: AbortSignal, progress
     clearTimeout(timer);
     signal.removeEventListener("abort", abort);
     if (worker) await worker.terminate().catch(() => {});
+    image?.close();
+    if (canvas) { canvas.width = 0; canvas.height = 0; }
   }
 }

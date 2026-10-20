@@ -19,5 +19,5 @@ export interface ReceiptDraft {
 export const LOW_CONFIDENCE_THRESHOLD = 85;
 
 export function suggestion(value = "", confidence = 0): ReceiptSuggestion {
-  return { value, confidence: Math.max(0, Math.min(100, confidence)), reviewed: false };
+  return { value, confidence: Number.isFinite(confidence) ? Math.max(0, Math.min(100, confidence)) : 0, reviewed: false };
 }

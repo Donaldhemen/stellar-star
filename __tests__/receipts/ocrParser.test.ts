@@ -28,3 +28,11 @@ test("bounds untrusted OCR output and caps heuristic confidence", () => {
   expect(draft.fields.merchant.confidence).toBeLessThan(85);
   expect(draft.lineItems.every((line) => line.amount.confidence < 85)).toBe(true);
 });
+test("invalid confidence metadata stays uncertain", () => {
+  const draft = parseReceiptText("Cafe\nTotal USD 8.00", Number.NaN);
+  expect(draft.fields.total.confidence).toBe(0);
+});
+test("uses the existing FX currency whitelist for explicit currency codes", () => {
+  expect(parseReceiptText("Cafe\nTOTAL CAD 8.00", 90).fields.currency.value).toBe("CAD");
+  expect(parseReceiptText("Cafe\nTOTAL XYZ 8.00", 90).fields.currency.value).toBe("");
+});

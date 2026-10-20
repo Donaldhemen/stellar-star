@@ -8,6 +8,7 @@
   "packageManager": "npm@10.8.2",
   "scripts": {
     "ocr:assets": "node scripts/prepare-ocr-assets.mjs",
+    "test:ocr:browser": "npm run ocr:assets && node scripts/smoke-receipt-ocr.mjs",
     "predev": "npm run ocr:assets",
     "prebuild": "npm run ocr:assets",
     "dev": "next dev",
