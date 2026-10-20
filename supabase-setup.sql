@@ -94,6 +94,7 @@ CREATE TABLE IF NOT EXISTS public.trips (
   settled           BOOLEAN     NOT NULL DEFAULT FALSE,
   created_by_wallet TEXT        NOT NULL,
   member_wallets    TEXT[]      NOT NULL DEFAULT ARRAY[]::TEXT[],
+  workspace         JSONB       NOT NULL DEFAULT '{"itinerary":[],"checklists":[],"bookings":[]}'::jsonb,
   created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -195,6 +196,11 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                  WHERE table_schema = 'public' AND table_name = 'trips' AND column_name = 'member_wallets') THEN
     ALTER TABLE public.trips ADD COLUMN member_wallets TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = 'public' AND table_name = 'trips' AND column_name = 'workspace') THEN
+    ALTER TABLE public.trips ADD COLUMN workspace JSONB NOT NULL DEFAULT '{"itinerary":[],"checklists":[],"bookings":[]}'::jsonb;
   END IF;
 END
 $migrate$;

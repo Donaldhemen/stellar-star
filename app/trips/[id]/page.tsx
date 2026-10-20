@@ -15,6 +15,7 @@ import { TripExpensesPanel } from "@/components/trips/TripExpensesPanel";
 import { TripNotFound } from "@/components/trips/TripNotFound";
 import { TripPaymentProgressBanner } from "@/components/trips/TripPaymentProgressBanner";
 import { TripTabs, type TripTab } from "@/components/trips/TripTabs";
+import { TravelWorkspacePanel } from "@/components/trips/workspace/TravelWorkspacePanel";
 import { InviteMemberModal } from "@/components/trips/InviteMemberModal";
 import { TripExportMenu } from "@/components/export/TripExportMenu";
 import { ReminderSchedulePanel } from "@/components/reminders/ReminderSchedulePanel";
@@ -176,6 +177,10 @@ export default function TripDetailPage() {
                 currentUserPublicKey={publicKey}
                 onAddExpense={canAddExpenses ? () => openExpenseForm(null) : undefined}
               />
+            ) : activeTab === "workspace" ? (
+              <motion.div key="workspace" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.15 }}>
+                <TravelWorkspacePanel trip={trip} expenses={tripExpenses} currentUserPublicKey={publicKey} />
+              </motion.div>
             ) : activeTab === "recurring" ? (
               <motion.div key="recurring" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.15 }}>
                 <RecurringPanel
