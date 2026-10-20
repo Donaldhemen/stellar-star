@@ -16,8 +16,7 @@ import { TripNotFound } from "@/components/trips/TripNotFound";
 import { TripPaymentProgressBanner } from "@/components/trips/TripPaymentProgressBanner";
 import { TripTabs, type TripTab } from "@/components/trips/TripTabs";
 import { InviteMemberModal } from "@/components/trips/InviteMemberModal";
-import { RecurringPanel } from "@/components/recurring/RecurringPanel";
-import { TripBudgetCard } from "@/components/budget/TripBudgetCard";
+import { TripWalletChangeBanner } from "@/components/trips/TripWalletChangeBanner";
 import { useAuth } from "@/context/AuthContext";
 import { useContractEvents } from "@/hooks/useContractEvents";
 import { useExpense } from "@/hooks/useExpense";
@@ -161,6 +160,7 @@ export default function TripDetailPage() {
             members={trip.members}
             onAddFromRule={canAddExpenses ? openExpenseForm : undefined}
           />
+          {!trip.settled && <TripWalletChangeBanner tripId={trip.id} />}
           {publicKey && <TripPaymentProgressBanner shares={myShares} />}
           <TripBudgetCard tripId={trip.id} expenses={tripExpenses} currentUserPublicKey={publicKey} />
           <TripTabs activeTab={activeTab} onChange={setActiveTab} />

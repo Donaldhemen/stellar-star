@@ -3,16 +3,13 @@
 import React, { useState } from "react";
 import { Plus, Trash2, UserPlus } from "lucide-react";
 import type { Member } from "@/types/expense";
-import type { RecurringExpenseRule, TripFormData, TripPermissions } from "@/types/trip";
+import type { Contact } from "@/types/contact";
+import type { TripFormData } from "@/types/trip";
 import { Input } from "@/components/ui/Input";
 import { TripPermissionsFields } from "@/components/trips/TripPermissionsFields";
 import { TripRecurringRulesEditor } from "@/components/trips/TripRecurringRulesEditor";
 import { findDuplicateWalletErrors, isValidStellarAddress } from "@/lib/split/calculator";
-import {
-  normalizePermissions,
-  normalizeRecurringRules,
-  validateTripDraft,
-} from "@/lib/trip/templates";
+import { canonicalWallet, contactToMember, walletTrust } from "@/lib/contacts/contacts";
 import { cn } from "@/lib/utils";
 
 interface TripFormProps {
@@ -23,10 +20,8 @@ interface TripFormProps {
   currentUserPublicKey?: string | null;
   /** Prefill the first member's name from authenticated user */
   currentUserName?: string | null;
-  /** Label for the primary button, e.g. "Create from template". */
-  submitLabel?: string;
-  /** Disables the submit button while a write is in flight. */
-  submitting?: boolean;
+  /** The user's saved contacts, offered as one-click members. */
+  contacts?: Contact[];
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -43,8 +38,7 @@ export function TripForm({
   initialData,
   currentUserPublicKey,
   currentUserName,
-  submitLabel = "Create Trip",
-  submitting = false,
+  contacts = [],
 }: TripFormProps) {
   const [name, setName] = useState(initialData?.name ?? "");
   const [description, setDescription] = useState(initialData?.description ?? "");
@@ -81,6 +75,21 @@ export function TripForm({
   };
 
   const addMember = () => setMembers((prev) => [...prev, createMember()]);
+
+  /** Fills the first empty row (or appends one) from a saved contact. */
+  const addFromContact = (contactId: string) => {
+    const contact = contacts.find((c) => c.id === contactId);
+    if (!contact) return;
+    setMembers((prev) => {
+      const wallet = canonicalWallet(contact.walletAddress);
+      // Same wallet already present: duplicates are identified by address.
+      if (wallet && prev.some((m) => canonicalWallet(m.walletAddress) === wallet)) return prev;
+      const member = contactToMember(contact);
+      const emptyIndex = prev.findIndex((m) => !m.name.trim() && !m.walletAddress?.trim());
+      if (emptyIndex === -1) return [...prev, member];
+      return prev.map((m, i) => (i === emptyIndex ? { ...member, id: m.id } : m));
+    });
+  };
 
   const removeMember = (id: string) => {
     if (members.length <= 2) return;
@@ -195,6 +204,26 @@ export function TripForm({
 
         {errors.members && (
           <p className="text-xs text-red-500 mb-2">{errors.members}</p>
+        )}
+
+        {contacts.length > 0 && (
+          <select
+            aria-label="Add from contacts"
+            value=""
+            onChange={(e) => addFromContact(e.target.value)}
+            className="mb-2 w-full rounded-xl border border-[#E5E5E5] bg-white px-3 py-2.5 text-sm text-[#555]"
+          >
+            <option value="">Add from contacts…</option>
+            {contacts.map((contact) => {
+              const trust = walletTrust(contact);
+              return (
+                <option key={contact.id} value={contact.id}>
+                  {contact.displayName}
+                  {trust === "verified" ? " ✓ verified wallet" : trust === "unverified" ? " (unverified wallet)" : " (no wallet)"}
+                </option>
+              );
+            })}
+          </select>
         )}
 
         <div className="space-y-2">

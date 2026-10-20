@@ -1766,615 +1766,392 @@ CREATE POLICY settlement_intents_delete_owner ON public.settlement_intents
   );
 
 -- ============================================================================
--- Trip templates & duplicate-from-history (#321, migrations/0008)
+-- Reusable contacts & member profiles (#322, migrations/0009)
 -- ============================================================================
--- Save a trip's structure as a reusable template, or start a new trip from a
--- template or a past trip. Copies never carry expenses, shares, payments or
--- balances; they are idempotent per key and audited in trip_copy_events.
--- See docs/DESIGN_TRIP_TEMPLATES.md.
+-- Private address book. Duplicates are detected by canonical wallet, only the
+-- wallet's owner can verify it, and wallet changes notify affected active
+-- trips before use. See docs/DESIGN_CONTACTS.md.
 
--- ── Trip structure columns ──────────────────────────────────────────────────
-ALTER TABLE public.trips
-  ADD COLUMN IF NOT EXISTS starts_on           DATE,
-  ADD COLUMN IF NOT EXISTS ends_on             DATE,
-  ADD COLUMN IF NOT EXISTS recurring_rules     JSONB NOT NULL DEFAULT '[]'::jsonb,
-  ADD COLUMN IF NOT EXISTS permissions         JSONB NOT NULL DEFAULT '{}'::jsonb,
-  ADD COLUMN IF NOT EXISTS source_template_id  TEXT,
-  ADD COLUMN IF NOT EXISTS copied_from_trip_id TEXT;
-
--- ── Templates ───────────────────────────────────────────────────────────────
--- Private to the wallet that saved them. No balances, shares or payments: the
--- columns that would hold them do not exist.
-CREATE TABLE IF NOT EXISTS public.trip_templates (
-  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  owner_wallet     TEXT        NOT NULL,
-  name             TEXT        NOT NULL CHECK (length(btrim(name)) > 0),
-  description      TEXT,
-  members          JSONB       NOT NULL DEFAULT '[]'::jsonb,
-  recurring_rules  JSONB       NOT NULL DEFAULT '[]'::jsonb,
-  permissions      JSONB       NOT NULL DEFAULT '{}'::jsonb,
-  duration_days    INT         CHECK (duration_days IS NULL OR duration_days > 0),
-  source_trip_id   TEXT,
-  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+-- ── Contacts ────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public.contacts (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_wallet        TEXT        NOT NULL,
+  display_name        TEXT        NOT NULL CHECK (length(btrim(display_name)) BETWEEN 1 AND 80),
+  wallet_address      TEXT        CHECK (wallet_address IS NULL OR wallet_address ~ '^G[A-Z2-7]{55}$'),
+  wallet_verified     BOOLEAN     NOT NULL DEFAULT FALSE,
+  claimed_by_wallet   TEXT,
+  verified_at         TIMESTAMPTZ,
+  invite_destination  TEXT        CHECK (invite_destination IS NULL OR length(invite_destination) <= 254),
+  invite_channel      TEXT        CHECK (invite_channel IS NULL OR invite_channel IN ('email', 'phone', 'other')),
+  -- SHA-256 of a one-time claim token; the token itself is never stored.
+  claim_token_hash    TEXT,
+  claim_expires_at    TIMESTAMPTZ,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_trip_templates_owner_created_at
-  ON public.trip_templates (owner_wallet, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS contacts_owner_wallet_unique_idx
+  ON public.contacts (owner_wallet, wallet_address)
+  WHERE wallet_address IS NOT NULL;
 
-DROP TRIGGER IF EXISTS trip_templates_set_updated_at ON public.trip_templates;
-CREATE TRIGGER trip_templates_set_updated_at
-  BEFORE UPDATE ON public.trip_templates
-  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+CREATE UNIQUE INDEX IF NOT EXISTS contacts_claim_token_hash_idx
+  ON public.contacts (claim_token_hash)
+  WHERE claim_token_hash IS NOT NULL;
 
-ALTER TABLE public.trip_templates ENABLE ROW LEVEL SECURITY;
+CREATE INDEX IF NOT EXISTS idx_contacts_owner_name
+  ON public.contacts (owner_wallet, display_name);
 
-DROP POLICY IF EXISTS trip_templates_select_owner ON public.trip_templates;
-CREATE POLICY trip_templates_select_owner ON public.trip_templates
-  FOR SELECT USING (owner_wallet = public.current_wallet());
-
-DROP POLICY IF EXISTS trip_templates_insert_owner ON public.trip_templates;
-CREATE POLICY trip_templates_insert_owner ON public.trip_templates
-  FOR INSERT WITH CHECK (owner_wallet = public.current_wallet());
-
-DROP POLICY IF EXISTS trip_templates_update_owner ON public.trip_templates;
-CREATE POLICY trip_templates_update_owner ON public.trip_templates
-  FOR UPDATE USING      (owner_wallet = public.current_wallet())
-             WITH CHECK (owner_wallet = public.current_wallet());
-
-DROP POLICY IF EXISTS trip_templates_delete_owner ON public.trip_templates;
-CREATE POLICY trip_templates_delete_owner ON public.trip_templates
-  FOR DELETE USING (owner_wallet = public.current_wallet());
-
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.trip_templates TO authenticated;
-
--- ── Copy audit log ──────────────────────────────────────────────────────────
--- Append-only: there is no UPDATE or DELETE policy, so under RLS a row can be
--- written once (by the function below, as the caller) and never rewritten.
-CREATE TABLE IF NOT EXISTS public.trip_copy_events (
-  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  idempotency_key  TEXT        NOT NULL,
-  operation        TEXT        NOT NULL
-                   CHECK (operation IN ('trip_to_template', 'template_to_trip', 'trip_to_trip')),
-  actor_wallet     TEXT        NOT NULL,
-  source_kind      TEXT        NOT NULL CHECK (source_kind IN ('template', 'trip')),
-  source_id        TEXT        NOT NULL,
-  target_kind      TEXT        NOT NULL CHECK (target_kind IN ('template', 'trip')),
-  target_id        TEXT        NOT NULL,
-  -- Counts of what was copied, for the audit trail. Never balances or amounts.
-  summary          JSONB       NOT NULL DEFAULT '{}'::jsonb,
-  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT trip_copy_events_idempotency_key_unique UNIQUE (idempotency_key)
-);
-
-CREATE INDEX IF NOT EXISTS idx_trip_copy_events_actor_created_at
-  ON public.trip_copy_events (actor_wallet, created_at DESC);
-
-ALTER TABLE public.trip_copy_events ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS trip_copy_events_select_actor ON public.trip_copy_events;
-CREATE POLICY trip_copy_events_select_actor ON public.trip_copy_events
-  FOR SELECT USING (actor_wallet = public.current_wallet());
-
-DROP POLICY IF EXISTS trip_copy_events_insert_actor ON public.trip_copy_events;
-CREATE POLICY trip_copy_events_insert_actor ON public.trip_copy_events
-  FOR INSERT WITH CHECK (actor_wallet = public.current_wallet());
-
-GRANT SELECT, INSERT ON public.trip_copy_events TO authenticated;
-
--- ── create_trip_from_copy ───────────────────────────────────────────────────
--- SECURITY INVOKER on purpose: every read and write below runs under the
--- caller's RLS, so a source the caller cannot see is reported as not found.
-CREATE OR REPLACE FUNCTION public.create_trip_from_copy(
-  p_idempotency_key TEXT,
-  p_source_kind     TEXT,
-  p_source_id       TEXT,
-  p_trip            JSONB
-)
-RETURNS SETOF public.trips
-LANGUAGE plpgsql
-SECURITY INVOKER
-SET search_path = public
-AS $fn$
-DECLARE
-  v_wallet   TEXT := public.current_wallet();
-  v_event    public.trip_copy_events%ROWTYPE;
-  v_trip_id  UUID;
-  v_name     TEXT := btrim(COALESCE(p_trip ->> 'name', ''));
-  v_members  JSONB := COALESCE(p_trip -> 'members', '[]'::jsonb);
-  v_rules    JSONB := COALESCE(p_trip -> 'recurring_rules', '[]'::jsonb);
-  v_starts   DATE := NULLIF(p_trip ->> 'starts_on', '')::DATE;
-  v_ends     DATE := NULLIF(p_trip ->> 'ends_on', '')::DATE;
-BEGIN
-  IF v_wallet IS NULL THEN
-    RAISE EXCEPTION 'COPY_UNAUTHENTICATED' USING ERRCODE = '42501';
-  END IF;
-  IF p_idempotency_key IS NULL OR length(p_idempotency_key) < 16 THEN
-    RAISE EXCEPTION 'COPY_INVALID_KEY';
-  END IF;
-  IF p_source_kind NOT IN ('template', 'trip') THEN
-    RAISE EXCEPTION 'COPY_INVALID_SOURCE';
-  END IF;
-
-  -- Replay: the same key always resolves to the trip it first created.
-  SELECT * INTO v_event FROM public.trip_copy_events WHERE idempotency_key = p_idempotency_key;
-  IF FOUND THEN
-    IF v_event.actor_wallet <> v_wallet THEN
-      RAISE EXCEPTION 'COPY_KEY_CONFLICT';
-    END IF;
-    RETURN QUERY SELECT * FROM public.trips WHERE id::TEXT = v_event.target_id;
-    RETURN;
-  END IF;
-
-  IF v_name = '' THEN
-    RAISE EXCEPTION 'COPY_INVALID_TRIP: name is required';
-  END IF;
-  IF jsonb_typeof(v_members) <> 'array' OR jsonb_array_length(v_members) < 2 THEN
-    RAISE EXCEPTION 'COPY_INVALID_TRIP: at least two members are required';
-  END IF;
-  IF jsonb_typeof(v_rules) <> 'array' THEN
-    RAISE EXCEPTION 'COPY_INVALID_TRIP: recurring_rules must be an array';
-  END IF;
-  IF v_starts IS NOT NULL AND v_ends IS NOT NULL AND v_ends < v_starts THEN
-    RAISE EXCEPTION 'COPY_INVALID_TRIP: end date precedes start date';
-  END IF;
-
-  IF p_source_kind = 'template' THEN
-    PERFORM 1 FROM public.trip_templates WHERE id::TEXT = p_source_id;
-  ELSE
-    PERFORM 1 FROM public.trips WHERE id::TEXT = p_source_id;
-  END IF;
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'COPY_SOURCE_NOT_FOUND';
-  END IF;
-
-  v_trip_id := COALESCE(NULLIF(p_trip ->> 'id', '')::UUID, gen_random_uuid());
-
-  -- Claim the key before writing. A concurrent call with the same key blocks
-  -- on the unique index, then sees the conflict and returns the winner's row.
-  INSERT INTO public.trip_copy_events (
-    idempotency_key, operation, actor_wallet,
-    source_kind, source_id, target_kind, target_id, summary
-  ) VALUES (
-    p_idempotency_key,
-    CASE WHEN p_source_kind = 'template' THEN 'template_to_trip' ELSE 'trip_to_trip' END,
-    v_wallet,
-    p_source_kind, p_source_id, 'trip', v_trip_id::TEXT,
-    jsonb_build_object(
-      'member_count', jsonb_array_length(v_members),
-      'recurring_rule_count', jsonb_array_length(v_rules),
-      'has_dates', v_starts IS NOT NULL OR v_ends IS NOT NULL,
-      'excluded', jsonb_build_array('expenses', 'shares', 'payments', 'balances', 'settled')
-    )
-  )
-  ON CONFLICT (idempotency_key) DO NOTHING;
-
-  IF NOT FOUND THEN
-    SELECT * INTO v_event FROM public.trip_copy_events WHERE idempotency_key = p_idempotency_key;
-    IF v_event.actor_wallet <> v_wallet THEN
-      RAISE EXCEPTION 'COPY_KEY_CONFLICT';
-    END IF;
-    RETURN QUERY SELECT * FROM public.trips WHERE id::TEXT = v_event.target_id;
-    RETURN;
-  END IF;
-
-  INSERT INTO public.trips (
-    id, name, description, members, expense_ids, settled, created_by_wallet,
-    starts_on, ends_on, recurring_rules, permissions,
-    source_template_id, copied_from_trip_id
-  ) VALUES (
-    v_trip_id,
-    v_name,
-    NULLIF(btrim(COALESCE(p_trip ->> 'description', '')), ''),
-    v_members,
-    ARRAY[]::TEXT[],          -- history is never copied
-    FALSE,
-    v_wallet,
-    v_starts,
-    v_ends,
-    v_rules,
-    COALESCE(p_trip -> 'permissions', '{}'::jsonb),
-    CASE WHEN p_source_kind = 'template' THEN p_source_id END,
-    CASE WHEN p_source_kind = 'trip' THEN p_source_id END
-  );
-
-  RETURN QUERY SELECT * FROM public.trips WHERE id = v_trip_id;
-END;
-$fn$;
-
--- ── save_trip_template ──────────────────────────────────────────────────────
-CREATE OR REPLACE FUNCTION public.save_trip_template(
-  p_idempotency_key TEXT,
-  p_source_trip_id  TEXT,
-  p_template        JSONB
-)
-RETURNS SETOF public.trip_templates
-LANGUAGE plpgsql
-SECURITY INVOKER
-SET search_path = public
-AS $fn$
-DECLARE
-  v_wallet      TEXT := public.current_wallet();
-  v_event       public.trip_copy_events%ROWTYPE;
-  v_template_id UUID := gen_random_uuid();
-  v_name        TEXT := btrim(COALESCE(p_template ->> 'name', ''));
-  v_members     JSONB := COALESCE(p_template -> 'members', '[]'::jsonb);
-  v_rules       JSONB := COALESCE(p_template -> 'recurring_rules', '[]'::jsonb);
-BEGIN
-  IF v_wallet IS NULL THEN
-    RAISE EXCEPTION 'COPY_UNAUTHENTICATED' USING ERRCODE = '42501';
-  END IF;
-  IF p_idempotency_key IS NULL OR length(p_idempotency_key) < 16 THEN
-    RAISE EXCEPTION 'COPY_INVALID_KEY';
-  END IF;
-
-  SELECT * INTO v_event FROM public.trip_copy_events WHERE idempotency_key = p_idempotency_key;
-  IF FOUND THEN
-    IF v_event.actor_wallet <> v_wallet THEN
-      RAISE EXCEPTION 'COPY_KEY_CONFLICT';
-    END IF;
-    RETURN QUERY SELECT * FROM public.trip_templates WHERE id::TEXT = v_event.target_id;
-    RETURN;
-  END IF;
-
-  IF v_name = '' THEN
-    RAISE EXCEPTION 'COPY_INVALID_TEMPLATE: name is required';
-  END IF;
-  IF jsonb_typeof(v_members) <> 'array' OR jsonb_typeof(v_rules) <> 'array' THEN
-    RAISE EXCEPTION 'COPY_INVALID_TEMPLATE: members and recurring_rules must be arrays';
-  END IF;
-
-  PERFORM 1 FROM public.trips WHERE id::TEXT = p_source_trip_id;
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'COPY_SOURCE_NOT_FOUND';
-  END IF;
-
-  INSERT INTO public.trip_copy_events (
-    idempotency_key, operation, actor_wallet,
-    source_kind, source_id, target_kind, target_id, summary
-  ) VALUES (
-    p_idempotency_key, 'trip_to_template', v_wallet,
-    'trip', p_source_trip_id, 'template', v_template_id::TEXT,
-    jsonb_build_object(
-      'member_count', jsonb_array_length(v_members),
-      'recurring_rule_count', jsonb_array_length(v_rules),
-      'excluded', jsonb_build_array('expenses', 'shares', 'payments', 'balances', 'settled')
-    )
-  )
-  ON CONFLICT (idempotency_key) DO NOTHING;
-
-  IF NOT FOUND THEN
-    SELECT * INTO v_event FROM public.trip_copy_events WHERE idempotency_key = p_idempotency_key;
-    IF v_event.actor_wallet <> v_wallet THEN
-      RAISE EXCEPTION 'COPY_KEY_CONFLICT';
-    END IF;
-    RETURN QUERY SELECT * FROM public.trip_templates WHERE id::TEXT = v_event.target_id;
-    RETURN;
-  END IF;
-
-  INSERT INTO public.trip_templates (
-    id, owner_wallet, name, description, members, recurring_rules,
-    permissions, duration_days, source_trip_id
-  ) VALUES (
-    v_template_id,
-    v_wallet,
-    v_name,
-    NULLIF(btrim(COALESCE(p_template ->> 'description', '')), ''),
-    v_members,
-    v_rules,
-    COALESCE(p_template -> 'permissions', '{}'::jsonb),
-    NULLIF(p_template ->> 'duration_days', '')::INT,
-    p_source_trip_id
-  );
-
--- ============================================================================
--- 16. RECURRING EXPENSE TEMPLATES & SCHEDULED DRAFTS (ISSUE #319)
--- ============================================================================
--- Mirrors migrations/0010_recurring_expenses.sql.
-
--- ─── Templates ──────────────────────────────────────────────────────────────
-
-CREATE TABLE IF NOT EXISTS public.recurring_expense_templates (
-  id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  trip_id            UUID REFERENCES public.trips (id) ON DELETE CASCADE,
-  title              TEXT        NOT NULL CHECK (char_length(btrim(title)) BETWEEN 1 AND 120),
-  description        TEXT        CHECK (description IS NULL OR char_length(description) <= 100),
-  category           TEXT        CHECK (category IS NULL OR category IN (
-                       'food', 'groceries', 'lodging', 'transport', 'activities', 'shopping',
-                       'utilities', 'rent', 'subscriptions', 'health', 'other'
-                     )),
-  tags               TEXT[]      NOT NULL DEFAULT ARRAY[]::TEXT[] CHECK (cardinality(tags) <= 10),
-  currency           TEXT        NOT NULL DEFAULT 'XLM',
-  amount_kind        TEXT        NOT NULL CHECK (amount_kind IN ('fixed', 'variable')),
-  amount             TEXT        CHECK (amount IS NULL OR amount ~ '^[0-9]+(\.[0-9]{1,7})?$'),
-  split_mode         TEXT        NOT NULL CHECK (split_mode IN ('equal', 'custom')),
-  paid_by_member_id  TEXT        NOT NULL,
-  members            JSONB       NOT NULL DEFAULT '[]'::jsonb,
-  cadence_unit       TEXT        NOT NULL CHECK (cadence_unit IN ('day', 'week', 'month', 'year')),
-  cadence_interval   INT         NOT NULL CHECK (cadence_interval BETWEEN 1 AND 365),
-  start_date         DATE        NOT NULL,
-  end_date           DATE,
-  -- Earliest date the generator may produce; moved forward on resume so a
-  -- pause is never back-filled.
-  generate_from      DATE        NOT NULL,
-  reminder_lead_days INT         CHECK (reminder_lead_days IS NULL OR reminder_lead_days BETWEEN 0 AND 30),
-  status             TEXT        NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'paused', 'ended')),
-  version            INT         NOT NULL DEFAULT 1,
-  created_by_wallet  TEXT        NOT NULL,
-  member_wallets     TEXT[]      NOT NULL DEFAULT ARRAY[]::TEXT[],
-  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT recurring_templates_dates_check CHECK (end_date IS NULL OR end_date >= start_date),
-  CONSTRAINT recurring_templates_fixed_amount_check CHECK (amount_kind <> 'fixed' OR amount IS NOT NULL)
-);
-
-CREATE INDEX IF NOT EXISTS idx_recurring_templates_member_wallets
-  ON public.recurring_expense_templates USING GIN (member_wallets);
-CREATE INDEX IF NOT EXISTS idx_recurring_templates_trip
-  ON public.recurring_expense_templates (trip_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_recurring_templates_active
-  ON public.recurring_expense_templates (id) WHERE status = 'active';
-
--- Same integrity pipeline as expenses/trips: identity frozen, access array
--- derived from members (never trusted from the client), updated_at stamped.
-DROP TRIGGER IF EXISTS trg_01_recurring_templates_freeze_identity ON public.recurring_expense_templates;
-CREATE TRIGGER trg_01_recurring_templates_freeze_identity
-  BEFORE UPDATE ON public.recurring_expense_templates
-  FOR EACH ROW EXECUTE FUNCTION public.freeze_row_identity();
-
-DROP TRIGGER IF EXISTS trg_02_recurring_templates_sync_member_wallets ON public.recurring_expense_templates;
-CREATE TRIGGER trg_02_recurring_templates_sync_member_wallets
-  BEFORE INSERT OR UPDATE ON public.recurring_expense_templates
-  FOR EACH ROW EXECUTE FUNCTION public.sync_member_wallets();
-
-DROP TRIGGER IF EXISTS trg_03_recurring_templates_set_updated_at ON public.recurring_expense_templates;
-CREATE TRIGGER trg_03_recurring_templates_set_updated_at
-  BEFORE UPDATE ON public.recurring_expense_templates
-  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
-
-ALTER TABLE public.recurring_expense_templates ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS recurring_templates_select_members ON public.recurring_expense_templates;
-CREATE POLICY recurring_templates_select_members ON public.recurring_expense_templates
-  FOR SELECT TO authenticated
-  USING (public.current_wallet() IS NOT NULL AND member_wallets @> ARRAY[public.current_wallet()]);
-
-DROP POLICY IF EXISTS recurring_templates_insert_own ON public.recurring_expense_templates;
-CREATE POLICY recurring_templates_insert_own ON public.recurring_expense_templates
-  FOR INSERT TO authenticated
-  WITH CHECK (public.current_wallet() IS NOT NULL AND created_by_wallet = public.current_wallet());
-
-DROP POLICY IF EXISTS recurring_templates_update_members ON public.recurring_expense_templates;
-CREATE POLICY recurring_templates_update_members ON public.recurring_expense_templates
-  FOR UPDATE TO authenticated
-  USING (public.current_wallet() IS NOT NULL AND member_wallets @> ARRAY[public.current_wallet()])
-  WITH CHECK (public.current_wallet() IS NOT NULL AND member_wallets @> ARRAY[public.current_wallet()]);
-
--- No DELETE policy: a series is ended, not deleted, so the drafts and expenses
--- it produced keep a valid source.
-
--- ─── Occurrence exceptions (skip / edit one future occurrence) ──────────────
-
-CREATE TABLE IF NOT EXISTS public.recurring_expense_exceptions (
-  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  template_id       UUID        NOT NULL REFERENCES public.recurring_expense_templates (id) ON DELETE CASCADE,
-  occurrence_date   DATE        NOT NULL,
-  action            TEXT        NOT NULL CHECK (action IN ('skip', 'override')),
-  overrides         JSONB       NOT NULL DEFAULT '{}'::jsonb,
-  created_by_wallet TEXT        NOT NULL,
-  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT recurring_exceptions_one_per_occurrence UNIQUE (template_id, occurrence_date)
-);
-
-ALTER TABLE public.recurring_expense_exceptions ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS recurring_exceptions_members ON public.recurring_expense_exceptions;
-CREATE POLICY recurring_exceptions_members ON public.recurring_expense_exceptions
-  FOR ALL TO authenticated
-  USING (
-    public.current_wallet() IS NOT NULL
-    AND EXISTS (
-      SELECT 1 FROM public.recurring_expense_templates t
-      WHERE t.id = recurring_expense_exceptions.template_id
-        AND t.member_wallets @> ARRAY[public.current_wallet()]
-    )
-  )
-  WITH CHECK (
-    public.current_wallet() IS NOT NULL
-    AND created_by_wallet = public.current_wallet()
-    AND EXISTS (
-      SELECT 1 FROM public.recurring_expense_templates t
-      WHERE t.id = recurring_expense_exceptions.template_id
-        AND t.member_wallets @> ARRAY[public.current_wallet()]
-    )
-  );
-
--- ─── Drafts ─────────────────────────────────────────────────────────────────
-
-CREATE TABLE IF NOT EXISTS public.expense_drafts (
-  id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  template_id        UUID        NOT NULL REFERENCES public.recurring_expense_templates (id),
-  template_version   INT         NOT NULL,
-  trip_id            UUID,
-  occurrence_date    DATE        NOT NULL,
-  payload            JSONB       NOT NULL,
-  status             TEXT        NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'saved', 'dismissed')),
-  expense_id         UUID REFERENCES public.expenses (id) ON DELETE SET NULL,
-  member_wallets     TEXT[]      NOT NULL DEFAULT ARRAY[]::TEXT[],
-  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  resolved_at        TIMESTAMPTZ,
-  resolved_by_wallet TEXT,
-  -- The idempotency key: one draft per occurrence, however often the job runs.
-  CONSTRAINT expense_drafts_one_per_occurrence UNIQUE (template_id, occurrence_date)
-);
-
-CREATE INDEX IF NOT EXISTS idx_expense_drafts_member_wallets
-  ON public.expense_drafts USING GIN (member_wallets);
-CREATE INDEX IF NOT EXISTS idx_expense_drafts_trip_occurrence
-  ON public.expense_drafts (trip_id, occurrence_date);
-
--- Access and scope come from the template, never from the inserting client;
--- once created, the snapshot (payload, source, date) is immutable.
-CREATE OR REPLACE FUNCTION public.prepare_expense_draft()
+-- Canonicalises input and protects the verification columns. Functions below
+-- that are allowed to touch them set stellar_star.contact_privileged for the
+-- current transaction only.
+CREATE OR REPLACE FUNCTION public.guard_contact_row()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $fn$
 DECLARE
-  tmpl RECORD;
+  privileged BOOLEAN := COALESCE(current_setting('stellar_star.contact_privileged', true), '') = 'on';
 BEGIN
-  IF TG_OP = 'INSERT' THEN
-    SELECT trip_id, member_wallets INTO tmpl
-      FROM public.recurring_expense_templates
-     WHERE id = NEW.template_id;
-    NEW.trip_id := tmpl.trip_id;
-    NEW.member_wallets := COALESCE(tmpl.member_wallets, ARRAY[]::TEXT[]);
-    NEW.status := 'pending';
-    NEW.expense_id := NULL;
-    NEW.resolved_at := NULL;
-    NEW.resolved_by_wallet := NULL;
-  ELSE
-    NEW.id := OLD.id;
-    NEW.template_id := OLD.template_id;
-    NEW.template_version := OLD.template_version;
-    NEW.trip_id := OLD.trip_id;
-    NEW.occurrence_date := OLD.occurrence_date;
-    NEW.payload := OLD.payload;
-    NEW.member_wallets := OLD.member_wallets;
-    NEW.created_at := OLD.created_at;
+  NEW.display_name := btrim(NEW.display_name);
+  NEW.wallet_address := NULLIF(upper(btrim(COALESCE(NEW.wallet_address, ''))), '');
+  NEW.invite_destination := NULLIF(btrim(COALESCE(NEW.invite_destination, '')), '');
+
+  IF privileged THEN
+    RETURN NEW;
   END IF;
+
+  IF TG_OP = 'INSERT' THEN
+    NEW.wallet_verified := FALSE;
+    NEW.claimed_by_wallet := NULL;
+    NEW.verified_at := NULL;
+    RETURN NEW;
+  END IF;
+
+  -- UPDATE by the owner.
+  NEW.owner_wallet := OLD.owner_wallet;
+  NEW.wallet_verified := OLD.wallet_verified;
+  NEW.claimed_by_wallet := OLD.claimed_by_wallet;
+  NEW.verified_at := OLD.verified_at;
+
+  IF OLD.wallet_address IS NOT NULL
+     AND NEW.wallet_address IS DISTINCT FROM OLD.wallet_address THEN
+    RAISE EXCEPTION 'CONTACT_WALLET_CHANGE_REQUIRES_NOTICE'
+      USING HINT = 'Use request_contact_wallet_change so affected trips are notified first.';
+  END IF;
+
   RETURN NEW;
 END;
 $fn$;
 
-DROP TRIGGER IF EXISTS trg_01_expense_drafts_prepare ON public.expense_drafts;
-CREATE TRIGGER trg_01_expense_drafts_prepare
-  BEFORE INSERT OR UPDATE ON public.expense_drafts
-  FOR EACH ROW EXECUTE FUNCTION public.prepare_expense_draft();
+DROP TRIGGER IF EXISTS trg_01_contacts_guard ON public.contacts;
+CREATE TRIGGER trg_01_contacts_guard
+  BEFORE INSERT OR UPDATE ON public.contacts
+  FOR EACH ROW EXECUTE FUNCTION public.guard_contact_row();
 
-ALTER TABLE public.expense_drafts ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS expense_drafts_select_members ON public.expense_drafts;
-CREATE POLICY expense_drafts_select_members ON public.expense_drafts
-  FOR SELECT TO authenticated
-  USING (public.current_wallet() IS NOT NULL AND member_wallets @> ARRAY[public.current_wallet()]);
-
--- member_wallets is copied from the template by the trigger above, so this
--- check means "the inserting wallet is a member of the source template".
-DROP POLICY IF EXISTS expense_drafts_insert_members ON public.expense_drafts;
-CREATE POLICY expense_drafts_insert_members ON public.expense_drafts
-  FOR INSERT TO authenticated
-  WITH CHECK (public.current_wallet() IS NOT NULL AND member_wallets @> ARRAY[public.current_wallet()]);
-
-DROP POLICY IF EXISTS expense_drafts_update_members ON public.expense_drafts;
-CREATE POLICY expense_drafts_update_members ON public.expense_drafts
-  FOR UPDATE TO authenticated
-  USING (public.current_wallet() IS NOT NULL AND member_wallets @> ARRAY[public.current_wallet()])
-  WITH CHECK (public.current_wallet() IS NOT NULL AND member_wallets @> ARRAY[public.current_wallet()]);
-
-GRANT SELECT, INSERT, UPDATE ON public.recurring_expense_templates TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.recurring_expense_exceptions TO authenticated;
-GRANT SELECT, INSERT, UPDATE ON public.expense_drafts TO authenticated;
-
--- ============================================================================
--- 17. TRIP BUDGETS & SPENDING ALERTS (ISSUE #320)
--- ============================================================================
--- Mirrors migrations/0011_trip_budgets.sql.
-
-CREATE TABLE IF NOT EXISTS public.trip_budgets (
-  trip_id           UUID PRIMARY KEY REFERENCES public.trips (id) ON DELETE CASCADE,
-  currency          TEXT        NOT NULL DEFAULT 'XLM',
-  total_amount      TEXT        CHECK (total_amount IS NULL OR total_amount ~ '^[0-9]+(\.[0-9]{1,7})?$'),
-  category_caps     JSONB       NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(category_caps) = 'object'),
-  thresholds        INT[]       NOT NULL DEFAULT ARRAY[50, 80, 100]
-                      CHECK (cardinality(thresholds) <= 6 AND 0 < ALL (thresholds) AND 200 >= ALL (thresholds)),
-  version           INT         NOT NULL DEFAULT 1,
-  created_by_wallet TEXT        NOT NULL,
-  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-DROP TRIGGER IF EXISTS trg_01_trip_budgets_set_updated_at ON public.trip_budgets;
-CREATE TRIGGER trg_01_trip_budgets_set_updated_at
-  BEFORE UPDATE ON public.trip_budgets
+DROP TRIGGER IF EXISTS trg_02_contacts_set_updated_at ON public.contacts;
+CREATE TRIGGER trg_02_contacts_set_updated_at
+  BEFORE UPDATE ON public.contacts
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
--- One row per threshold crossing. `cleared_at` is set when spend falls back
--- below the threshold, re-arming it; the partial unique index guarantees a
--- crossing fires exactly once even when several members' browsers evaluate it
--- at the same moment.
-CREATE TABLE IF NOT EXISTS public.budget_alerts (
-  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  trip_id           UUID        NOT NULL REFERENCES public.trips (id) ON DELETE CASCADE,
-  scope             TEXT        NOT NULL,
-  threshold         INT         NOT NULL CHECK (threshold > 0),
-  spent_at_crossing TEXT        NOT NULL,
-  fired_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  cleared_at        TIMESTAMPTZ
+ALTER TABLE public.contacts ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS contacts_select_owner ON public.contacts;
+CREATE POLICY contacts_select_owner ON public.contacts
+  FOR SELECT USING (owner_wallet = public.current_wallet());
+
+DROP POLICY IF EXISTS contacts_insert_owner ON public.contacts;
+CREATE POLICY contacts_insert_owner ON public.contacts
+  FOR INSERT WITH CHECK (owner_wallet = public.current_wallet());
+
+DROP POLICY IF EXISTS contacts_update_owner ON public.contacts;
+CREATE POLICY contacts_update_owner ON public.contacts
+  FOR UPDATE USING      (owner_wallet = public.current_wallet())
+             WITH CHECK (owner_wallet = public.current_wallet());
+
+DROP POLICY IF EXISTS contacts_delete_owner ON public.contacts;
+CREATE POLICY contacts_delete_owner ON public.contacts
+  FOR DELETE USING (owner_wallet = public.current_wallet());
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.contacts TO authenticated;
+
+-- ── Wallet change history ───────────────────────────────────────────────────
+-- Written only by the functions below. Readable by the contact's owner and by
+-- every member of an affected trip, which is how those groups are notified.
+CREATE TABLE IF NOT EXISTS public.contact_wallet_changes (
+  id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  contact_id         UUID        NOT NULL REFERENCES public.contacts (id) ON DELETE CASCADE,
+  owner_wallet       TEXT        NOT NULL,
+  contact_name       TEXT        NOT NULL,
+  old_wallet         TEXT,
+  new_wallet         TEXT        NOT NULL CHECK (new_wallet ~ '^G[A-Z2-7]{55}$'),
+  status             TEXT        NOT NULL DEFAULT 'pending_notice'
+                     CHECK (status IN ('pending_notice', 'applied', 'cancelled')),
+  affected_trip_ids  TEXT[]      NOT NULL DEFAULT ARRAY[]::TEXT[],
+  notice_until       TIMESTAMPTZ NOT NULL,
+  verified           BOOLEAN     NOT NULL DEFAULT FALSE,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  applied_at         TIMESTAMPTZ
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS budget_alerts_one_active_crossing
-  ON public.budget_alerts (trip_id, scope, threshold)
-  WHERE cleared_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_contact_wallet_changes_contact_created_at
+  ON public.contact_wallet_changes (contact_id, created_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_budget_alerts_trip_fired_at
-  ON public.budget_alerts (trip_id, fired_at DESC);
+CREATE INDEX IF NOT EXISTS idx_contact_wallet_changes_affected_trips
+  ON public.contact_wallet_changes USING GIN (affected_trip_ids);
 
--- Per-member mute. A member can only mute (or unmute) themselves.
-CREATE TABLE IF NOT EXISTS public.budget_alert_mutes (
-  trip_id       UUID        NOT NULL REFERENCES public.trips (id) ON DELETE CASCADE,
-  member_wallet TEXT        NOT NULL,
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (trip_id, member_wallet)
-);
+-- At most one pending change per contact.
+CREATE UNIQUE INDEX IF NOT EXISTS contact_wallet_changes_one_pending_idx
+  ON public.contact_wallet_changes (contact_id)
+  WHERE status = 'pending_notice';
 
-ALTER TABLE public.trip_budgets ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.budget_alerts ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.budget_alert_mutes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.contact_wallet_changes ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS trip_budgets_members ON public.trip_budgets;
-CREATE POLICY trip_budgets_members ON public.trip_budgets
-  FOR ALL TO authenticated
-  USING (
-    public.current_wallet() IS NOT NULL
-    AND EXISTS (SELECT 1 FROM public.trips t
-                WHERE t.id = trip_budgets.trip_id AND t.member_wallets @> ARRAY[public.current_wallet()])
+DROP POLICY IF EXISTS contact_wallet_changes_select_party ON public.contact_wallet_changes;
+CREATE POLICY contact_wallet_changes_select_party ON public.contact_wallet_changes
+  FOR SELECT USING (
+    owner_wallet = public.current_wallet()
+    OR EXISTS (
+      SELECT 1 FROM public.trips t
+       WHERE t.id::TEXT = ANY (affected_trip_ids)
+         AND t.member_wallets @> ARRAY[public.current_wallet()]
+    )
+  );
+
+GRANT SELECT ON public.contact_wallet_changes TO authenticated;
+
+-- ── request_contact_wallet_change ───────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.request_contact_wallet_change(
+  p_contact_id  UUID,
+  p_new_wallet  TEXT
+)
+RETURNS SETOF public.contact_wallet_changes
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $fn$
+DECLARE
+  v_wallet   TEXT := public.current_wallet();
+  v_contact  public.contacts%ROWTYPE;
+  v_new      TEXT := upper(btrim(COALESCE(p_new_wallet, '')));
+  v_affected TEXT[];
+BEGIN
+  IF v_wallet IS NULL THEN
+    RAISE EXCEPTION 'CONTACT_UNAUTHENTICATED' USING ERRCODE = '42501';
+  END IF;
+
+  SELECT * INTO v_contact FROM public.contacts
+   WHERE id = p_contact_id AND owner_wallet = v_wallet
+   FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'CONTACT_NOT_FOUND';
+  END IF;
+
+  IF v_new !~ '^G[A-Z2-7]{55}$' THEN
+    RAISE EXCEPTION 'CONTACT_INVALID_WALLET';
+  END IF;
+  IF v_new = v_contact.wallet_address THEN
+    RAISE EXCEPTION 'CONTACT_WALLET_UNCHANGED';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.contacts
+              WHERE owner_wallet = v_wallet AND wallet_address = v_new AND id <> p_contact_id) THEN
+    RAISE EXCEPTION 'CONTACT_DUPLICATE_WALLET';
+  END IF;
+
+  UPDATE public.contact_wallet_changes
+     SET status = 'cancelled'
+   WHERE contact_id = p_contact_id AND status = 'pending_notice';
+
+  -- Active trips the owner shares with the old wallet. Settled trips are
+  -- history and are left alone.
+  SELECT COALESCE(array_agg(t.id::TEXT), ARRAY[]::TEXT[]) INTO v_affected
+    FROM public.trips t
+   WHERE v_contact.wallet_address IS NOT NULL
+     AND t.settled = FALSE
+     AND t.member_wallets @> ARRAY[v_wallet]
+     AND t.member_wallets @> ARRAY[v_contact.wallet_address];
+
+  RETURN QUERY
+  INSERT INTO public.contact_wallet_changes (
+    contact_id, owner_wallet, contact_name, old_wallet, new_wallet,
+    affected_trip_ids, notice_until, verified
+  ) VALUES (
+    p_contact_id, v_wallet, v_contact.display_name, v_contact.wallet_address, v_new,
+    v_affected,
+    CASE WHEN cardinality(v_affected) = 0 THEN NOW() ELSE NOW() + INTERVAL '24 hours' END,
+    -- An address typed by the owner is never verified; only a claim is.
+    FALSE
   )
-  WITH CHECK (
-    public.current_wallet() IS NOT NULL
-    AND EXISTS (SELECT 1 FROM public.trips t
-                WHERE t.id = trip_budgets.trip_id AND t.member_wallets @> ARRAY[public.current_wallet()])
-  );
+  RETURNING *;
+END;
+$fn$;
 
-DROP POLICY IF EXISTS budget_alerts_members ON public.budget_alerts;
-CREATE POLICY budget_alerts_members ON public.budget_alerts
-  FOR ALL TO authenticated
-  USING (
-    public.current_wallet() IS NOT NULL
-    AND EXISTS (SELECT 1 FROM public.trips t
-                WHERE t.id = budget_alerts.trip_id AND t.member_wallets @> ARRAY[public.current_wallet()])
+-- ── apply / cancel ──────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.apply_contact_wallet_change(p_change_id UUID)
+RETURNS SETOF public.contacts
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $fn$
+DECLARE
+  v_wallet TEXT := public.current_wallet();
+  v_change public.contact_wallet_changes%ROWTYPE;
+BEGIN
+  IF v_wallet IS NULL THEN
+    RAISE EXCEPTION 'CONTACT_UNAUTHENTICATED' USING ERRCODE = '42501';
+  END IF;
+
+  SELECT * INTO v_change FROM public.contact_wallet_changes
+   WHERE id = p_change_id AND owner_wallet = v_wallet
+   FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'CONTACT_CHANGE_NOT_FOUND';
+  END IF;
+  IF v_change.status <> 'pending_notice' THEN
+    RAISE EXCEPTION 'CONTACT_CHANGE_NOT_PENDING';
+  END IF;
+  IF cardinality(v_change.affected_trip_ids) > 0 AND v_change.notice_until > NOW() THEN
+    RAISE EXCEPTION 'CONTACT_NOTICE_PERIOD_ACTIVE: affected trips are still being notified until %',
+      v_change.notice_until;
+  END IF;
+
+  PERFORM set_config('stellar_star.contact_privileged', 'on', true);
+
+  UPDATE public.contact_wallet_changes
+     SET status = 'applied', applied_at = NOW()
+   WHERE id = p_change_id;
+
+  RETURN QUERY
+  UPDATE public.contacts
+     SET wallet_address    = v_change.new_wallet,
+         wallet_verified   = v_change.verified,
+         claimed_by_wallet = CASE WHEN v_change.verified THEN v_change.new_wallet END,
+         verified_at       = CASE WHEN v_change.verified THEN NOW() END
+   WHERE id = v_change.contact_id
+  RETURNING *;
+
+  PERFORM set_config('stellar_star.contact_privileged', 'off', true);
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION public.cancel_contact_wallet_change(p_change_id UUID)
+RETURNS SETOF public.contact_wallet_changes
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $fn$
+BEGIN
+  IF public.current_wallet() IS NULL THEN
+    RAISE EXCEPTION 'CONTACT_UNAUTHENTICATED' USING ERRCODE = '42501';
+  END IF;
+
+  RETURN QUERY
+  UPDATE public.contact_wallet_changes
+     SET status = 'cancelled'
+   WHERE id = p_change_id
+     AND owner_wallet = public.current_wallet()
+     AND status = 'pending_notice'
+  RETURNING *;
+END;
+$fn$;
+
+-- ── claim_contact_profile ───────────────────────────────────────────────────
+-- The wallet owner proves control by signing in (the session JWT carries the
+-- signature-verified wallet) and presenting the one-time claim token.
+CREATE OR REPLACE FUNCTION public.claim_contact_profile(p_token_hash TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $fn$
+DECLARE
+  v_claimant TEXT := public.current_wallet();
+  v_contact  public.contacts%ROWTYPE;
+  v_change   public.contact_wallet_changes%ROWTYPE;
+BEGIN
+  IF v_claimant IS NULL THEN
+    RAISE EXCEPTION 'CONTACT_UNAUTHENTICATED' USING ERRCODE = '42501';
+  END IF;
+
+  SELECT * INTO v_contact FROM public.contacts
+   WHERE claim_token_hash = p_token_hash
+   FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'CONTACT_CLAIM_INVALID';
+  END IF;
+  IF v_contact.claim_expires_at IS NULL OR v_contact.claim_expires_at <= NOW() THEN
+    RAISE EXCEPTION 'CONTACT_CLAIM_EXPIRED';
+  END IF;
+  IF v_contact.owner_wallet = v_claimant THEN
+    RAISE EXCEPTION 'CONTACT_CLAIM_SELF';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.contacts
+              WHERE owner_wallet = v_contact.owner_wallet
+                AND wallet_address = v_claimant
+                AND id <> v_contact.id) THEN
+    RAISE EXCEPTION 'CONTACT_DUPLICATE_WALLET';
+  END IF;
+
+  PERFORM set_config('stellar_star.contact_privileged', 'on', true);
+
+  -- One-time token: consumed whatever happens next.
+  UPDATE public.contacts SET claim_token_hash = NULL, claim_expires_at = NULL
+   WHERE id = v_contact.id;
+
+  IF v_contact.wallet_address IS NULL OR v_contact.wallet_address = v_claimant THEN
+    -- No address in use yet, or the claim confirms the one already entered:
+    -- nothing historic changes, so verify immediately.
+    UPDATE public.contacts
+       SET wallet_address = v_claimant, wallet_verified = TRUE,
+           claimed_by_wallet = v_claimant, verified_at = NOW()
+     WHERE id = v_contact.id;
+
+    PERFORM set_config('stellar_star.contact_privileged', 'off', true);
+    RETURN jsonb_build_object(
+      'status', 'verified',
+      'contact_name', v_contact.display_name,
+      'owner_wallet', v_contact.owner_wallet
+    );
+  END IF;
+
+  -- The claimant controls a different wallet than the one on file. Treat it as
+  -- an address change, so the owner's active trips are notified first.
+  UPDATE public.contact_wallet_changes SET status = 'cancelled'
+   WHERE contact_id = v_contact.id AND status = 'pending_notice';
+
+  INSERT INTO public.contact_wallet_changes (
+    contact_id, owner_wallet, contact_name, old_wallet, new_wallet,
+    affected_trip_ids, notice_until, verified
   )
-  WITH CHECK (
-    public.current_wallet() IS NOT NULL
-    AND EXISTS (SELECT 1 FROM public.trips t
-                WHERE t.id = budget_alerts.trip_id AND t.member_wallets @> ARRAY[public.current_wallet()])
+  SELECT v_contact.id, v_contact.owner_wallet, v_contact.display_name,
+         v_contact.wallet_address, v_claimant, affected,
+         CASE WHEN cardinality(affected) = 0 THEN NOW() ELSE NOW() + INTERVAL '24 hours' END,
+         TRUE
+    FROM (
+      SELECT COALESCE(array_agg(t.id::TEXT), ARRAY[]::TEXT[]) AS affected
+        FROM public.trips t
+       WHERE t.settled = FALSE
+         AND t.member_wallets @> ARRAY[v_contact.owner_wallet]
+         AND t.member_wallets @> ARRAY[v_contact.wallet_address]
+    ) a
+  RETURNING * INTO v_change;
+
+  PERFORM set_config('stellar_star.contact_privileged', 'off', true);
+  RETURN jsonb_build_object(
+    'status', 'pending_notice',
+    'contact_name', v_contact.display_name,
+    'owner_wallet', v_contact.owner_wallet,
+    'notice_until', v_change.notice_until
   );
+END;
+$fn$;
 
-DROP POLICY IF EXISTS budget_alert_mutes_self ON public.budget_alert_mutes;
-CREATE POLICY budget_alert_mutes_self ON public.budget_alert_mutes
-  FOR ALL TO authenticated
-  USING (public.current_wallet() IS NOT NULL AND member_wallet = public.current_wallet())
-  WITH CHECK (
-    public.current_wallet() IS NOT NULL
-    AND member_wallet = public.current_wallet()
-    AND EXISTS (SELECT 1 FROM public.trips t
-                WHERE t.id = budget_alert_mutes.trip_id AND t.member_wallets @> ARRAY[public.current_wallet()])
-  );
-
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.trip_budgets TO authenticated;
-GRANT SELECT, INSERT, UPDATE ON public.budget_alerts TO authenticated;
-GRANT SELECT, INSERT, DELETE ON public.budget_alert_mutes TO authenticated;
-
-NOTIFY pgrst, 'reload schema';
+REVOKE ALL ON FUNCTION public.request_contact_wallet_change(UUID, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.apply_contact_wallet_change(UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.cancel_contact_wallet_change(UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.claim_contact_profile(TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.request_contact_wallet_change(UUID, TEXT) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.apply_contact_wallet_change(UUID) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.cancel_contact_wallet_change(UUID) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.claim_contact_profile(TEXT) TO authenticated;
 
 -- ─── RECORD APPLIED MIGRATIONS ───────────────────────────────────────────────
 
@@ -2387,8 +2164,5 @@ VALUES
   ('0005', '0005_verify_trip_invite_rpc', 'verify_trip_invite_v1'),
   ('0006', '0006_settlement_request_ids', 'settlement_request_ids_v1'),
   ('0007', '0007_composite_query_indexes', 'composite_query_indexes_v1'),
-  ('0008', '0008_expense_categories_tags_search', 'expense_categories_tags_search_v1'),
-  ('0009', '0009_expense_receipts', 'expense_receipts_v1'),
-  ('0010', '0010_recurring_expenses', 'recurring_expenses_v1'),
-  ('0011', '0011_trip_budgets', 'trip_budgets_v1')
+  ('0009', '0009_contacts_member_profiles', 'contacts_member_profiles_v1')
 ON CONFLICT (version) DO NOTHING;

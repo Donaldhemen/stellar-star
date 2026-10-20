@@ -79,31 +79,35 @@ export type TripRow = {
   updated_at: string;
 };
 
-export type TripTemplateRow = {
+export type ContactRow = {
   id: string;
   owner_wallet: string;
-  name: string;
-  description: string | null;
-  members: Json;
-  recurring_rules: Json;
-  permissions: Json;
-  duration_days: number | null;
-  source_trip_id: string | null;
+  display_name: string;
+  wallet_address: string | null;
+  wallet_verified: boolean;
+  claimed_by_wallet: string | null;
+  verified_at: string | null;
+  invite_destination: string | null;
+  invite_channel: "email" | "phone" | "other" | null;
+  claim_token_hash: string | null;
+  claim_expires_at: string | null;
   created_at: string;
   updated_at: string;
 };
 
-export type TripCopyEventRow = {
+export type ContactWalletChangeRow = {
   id: string;
-  idempotency_key: string;
-  operation: "trip_to_template" | "template_to_trip" | "trip_to_trip";
-  actor_wallet: string;
-  source_kind: "template" | "trip";
-  source_id: string;
-  target_kind: "template" | "trip";
-  target_id: string;
-  summary: Json;
+  contact_id: string;
+  owner_wallet: string;
+  contact_name: string;
+  old_wallet: string | null;
+  new_wallet: string;
+  status: "pending_notice" | "applied" | "cancelled";
+  affected_trip_ids: string[];
+  notice_until: string;
+  verified: boolean;
   created_at: string;
+  applied_at: string | null;
 };
 
 export type AuthChallengeRow = {
@@ -390,6 +394,32 @@ export type Database = {
         Update: Record<string, never>;
         Relationships: [];
       };
+      contacts: {
+        Row: ContactRow;
+        // Verification columns are set only by claim_contact_profile; the
+        // guard trigger resets them on any direct write.
+        Insert: Pick<ContactRow, "owner_wallet" | "display_name"> &
+          Partial<
+            Pick<
+              ContactRow,
+              "id" | "wallet_address" | "invite_destination" | "invite_channel" | "claim_token_hash" | "claim_expires_at"
+            >
+          >;
+        Update: Partial<
+          Pick<
+            ContactRow,
+            "display_name" | "wallet_address" | "invite_destination" | "invite_channel" | "claim_token_hash" | "claim_expires_at"
+          >
+        >;
+        Relationships: [];
+      };
+      contact_wallet_changes: {
+        Row: ContactWalletChangeRow;
+        // Written only by the SECURITY DEFINER functions.
+        Insert: Record<string, never>;
+        Update: Record<string, never>;
+        Relationships: [];
+      };
       trip_invites: {
         Row: TripInviteRow;
         Insert: {
@@ -641,22 +671,21 @@ export type Database = {
         };
         Returns: ExpenseRow[];
       };
-      create_trip_from_copy: {
-        Args: {
-          p_idempotency_key: string;
-          p_source_kind: "template" | "trip";
-          p_source_id: string;
-          p_trip: Json;
-        };
-        Returns: TripRow[];
+      request_contact_wallet_change: {
+        Args: { p_contact_id: string; p_new_wallet: string };
+        Returns: ContactWalletChangeRow[];
       };
-      save_trip_template: {
-        Args: {
-          p_idempotency_key: string;
-          p_source_trip_id: string;
-          p_template: Json;
-        };
-        Returns: TripTemplateRow[];
+      apply_contact_wallet_change: {
+        Args: { p_change_id: string };
+        Returns: ContactRow[];
+      };
+      cancel_contact_wallet_change: {
+        Args: { p_change_id: string };
+        Returns: ContactWalletChangeRow[];
+      };
+      claim_contact_profile: {
+        Args: { p_token_hash: string };
+        Returns: Json;
       };
     };
     Enums: { [_ in never]: never };
@@ -680,5 +709,5 @@ export type SponsoredAccountInsert = Database["public"]["Tables"]["sponsored_acc
 export type SponsoredAccountUpdate = Database["public"]["Tables"]["sponsored_accounts"]["Update"];
 export type SponsorshipInviteInsert = Database["public"]["Tables"]["sponsorship_invites"]["Insert"];
 export type TripInviteInsert = Database["public"]["Tables"]["trip_invites"]["Insert"];
-export type TripTemplateInsert = Database["public"]["Tables"]["trip_templates"]["Insert"];
-export type TripTemplateUpdate = Database["public"]["Tables"]["trip_templates"]["Update"];
+export type ContactInsert = Database["public"]["Tables"]["contacts"]["Insert"];
+export type ContactUpdate = Database["public"]["Tables"]["contacts"]["Update"];
