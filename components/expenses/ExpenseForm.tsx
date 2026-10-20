@@ -8,7 +8,8 @@ import { ExpenseMemberList } from "@/components/expenses/ExpenseMemberList";
 import { ExpensePayerSelect } from "@/components/expenses/ExpensePayerSelect";
 import { ExpenseSplitModeControl } from "@/components/expenses/ExpenseSplitModeControl";
 import { ExpenseSplitPreview } from "@/components/expenses/ExpenseSplitPreview";
-import { useExpenseForm, type ExpenseFormInitialValues } from "@/hooks/useExpenseForm";
+import { useExpenseForm } from "@/hooks/useExpenseForm";
+import type { ExpenseFormInitialValues } from "@/hooks/useExpenseForm";
 import type { Member } from "@/types/expense";
 
 interface ExpenseFormProps {

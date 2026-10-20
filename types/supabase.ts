@@ -211,6 +211,62 @@ export type ExpenseReceiptRow = {
   removal_reason: "user" | "retention" | "expense_deleted" | null;
 };
 
+export type RecurringTemplateRow = {
+  id: string;
+  trip_id: string | null;
+  title: string;
+  description: string | null;
+  category: string | null;
+  tags: string[];
+  currency: string;
+  amount_kind: "fixed" | "variable";
+  /** Fixed amount, or the pre-fill estimate for a variable one. */
+  amount: string | null;
+  split_mode: "equal" | "custom";
+  paid_by_member_id: string;
+  members: Json;
+  cadence_unit: "day" | "week" | "month" | "year";
+  cadence_interval: number;
+  start_date: string;
+  end_date: string | null;
+  generate_from: string;
+  reminder_lead_days: number | null;
+  status: "active" | "paused" | "ended";
+  version: number;
+  created_by_wallet: string;
+  /** Derived by the `sync_member_wallets` trigger — read-only from the client. */
+  member_wallets: string[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type RecurringExceptionRow = {
+  id: string;
+  template_id: string;
+  occurrence_date: string;
+  action: "skip" | "override";
+  overrides: Json;
+  created_by_wallet: string;
+  created_at: string;
+};
+
+export type ExpenseDraftRow = {
+  id: string;
+  template_id: string;
+  template_version: number;
+  /** Copied from the template by trigger. */
+  trip_id: string | null;
+  occurrence_date: string;
+  payload: Json;
+  status: "pending" | "saved" | "dismissed";
+  expense_id: string | null;
+  /** Copied from the template by trigger — read-only from the client. */
+  member_wallets: string[];
+  created_at: string;
+  resolved_at: string | null;
+  resolved_by_wallet: string | null;
+};
+
 export type SchemaMigrationRow = {
   version: string;
   name: string;
@@ -395,6 +451,39 @@ export type Database = {
         Update: Partial<
           Pick<ExpenseReceiptRow, "status" | "file_name" | "caption" | "removed_at" | "removed_by_wallet" | "removal_reason">
         >;
+        Relationships: [];
+      };
+      recurring_expense_templates: {
+        Row: RecurringTemplateRow;
+        Insert: Omit<
+          RecurringTemplateRow,
+          ServerManaged | "version" | "status" | "tags" | "generate_from"
+        > & {
+          id?: string;
+          version?: number;
+          status?: RecurringTemplateRow["status"];
+          tags?: string[];
+          generate_from?: string;
+        };
+        Update: Partial<Omit<RecurringTemplateRow, ServerManaged | "created_by_wallet" | "trip_id">>;
+        Relationships: [];
+      };
+      recurring_expense_exceptions: {
+        Row: RecurringExceptionRow;
+        Insert: Omit<RecurringExceptionRow, "id" | "created_at" | "overrides"> & {
+          id?: string;
+          overrides?: Json;
+        };
+        Update: Partial<Pick<RecurringExceptionRow, "action" | "overrides">>;
+        Relationships: [];
+      };
+      expense_drafts: {
+        Row: ExpenseDraftRow;
+        Insert: Pick<ExpenseDraftRow, "template_id" | "template_version" | "occurrence_date" | "payload"> & {
+          id?: string;
+        };
+        // Only the resolution changes; the frozen payload and source never do.
+        Update: Partial<Pick<ExpenseDraftRow, "status" | "expense_id" | "resolved_at" | "resolved_by_wallet">>;
         Relationships: [];
       };
       schema_migrations: {

@@ -29,7 +29,19 @@ export interface UseExpenseFormOptions {
   currentUserPublicKey?: string | null;
   currentUserName?: string | null;
   defaultMembers?: Member[];
+  /** Pre-fill, e.g. from a recurring draft. The user still reviews and submits. */
   initialValues?: ExpenseFormInitialValues;
+}
+
+export interface ExpenseFormInitialValues {
+  title?: string;
+  description?: string | null;
+  totalAmount?: string;
+  currency?: string;
+  splitMode?: SplitMode;
+  paidByMemberId?: string;
+  category?: ExpenseCategory | null;
+  tags?: string[];
 }
 
 interface ExpenseFormValidationInput {
@@ -105,18 +117,18 @@ export function useExpenseForm({
   }
 
   const [title, setTitle] = useState(initialValues?.title ?? "");
-  const [description, setDescription] = useState("");
+  const [description, setDescription] = useState(initialValues?.description ?? "");
   const [totalAmount, setTotalAmount] = useState(initialValues?.totalAmount ?? "");
-  const [currency, setCurrency] = useState("XLM");
+  const [currency, setCurrency] = useState(initialValues?.currency ?? "XLM");
+  const [category, setCategoryState] = useState<ExpenseCategory | "">(initialValues?.category ?? "");
+  const [tagsInput, setTagsInput] = useState((initialValues?.tags ?? []).join(", "));
   const [splitMode, setSplitMode] = useState<SplitMode>(initialValues?.splitMode ?? "equal");
   const [members, setMembers] = useState<Member[]>(initialMembersRef.current!);
-  const [paidByMemberId, setPaidByMemberId] = useState(() => {
-    const initial = initialMembersRef.current!;
-    const preferred = initialValues?.paidByMemberId;
-    return preferred && initial.some((member) => member.id === preferred)
-      ? preferred
-      : initial[0]?.id ?? "";
-  });
+  const [paidByMemberId, setPaidByMemberId] = useState(
+    initialMembersRef.current!.some((member) => member.id === initialValues?.paidByMemberId)
+      ? initialValues!.paidByMemberId!
+      : initialMembersRef.current![0]?.id ?? "",
+  );
   const [submitting, setSubmitting] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   /**
