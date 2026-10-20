@@ -12,6 +12,7 @@ import type { Expense, SplitShare } from "@/types/expense";
 
 import { Money } from "@/components/ui/Money";
 import { describeSavedConversion, enteredAmountOf } from "@/lib/fx/quoteLock";
+import { settlementAssetOf } from "@/lib/settlement/expenseAsset";
 
 interface ExpenseCardProps {
   expense: Expense;
@@ -169,7 +170,9 @@ export function ExpenseCard({ expense, currentUserPublicKey, onDelete, tripId }:
                 poolBalance={poolBalance}
                 depositLoading={depositLoading}
                 onDepositPool={depositPool}
-                reminderContext={tripId ? { tripId, expenseId: expense.id } : undefined}
+                paymentRequest={
+                  tripId ? { tripId, expenseId: expense.id, asset: settlementAssetOf(expense) } : undefined
+                }
               />
 
               {paymentState.status !== "idle" && (

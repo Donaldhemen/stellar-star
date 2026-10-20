@@ -20,6 +20,7 @@ import { NETWORK_PASSPHRASE } from "@/lib/utils/constants";
 import { PayButton } from "@/components/payment/PayButton";
 import { TransactionHash } from "@/components/payment/TransactionHash";
 import { PathPaymentConfirm } from "@/components/payment/PathPaymentConfirm";
+import { PaymentRequestToggle } from "@/components/payment/PaymentRequestPanel";
 import { cn } from "@/lib/utils";
 import { useNetPayment } from "@/hooks/useNetPayment";
 import { usePathPayment } from "@/hooks/usePathPayment";
@@ -266,6 +267,30 @@ function NetPaymentRow({
       {(done || paymentState.status === "partial_success") && txHash && (
         <div className="pl-1">
           <TransactionHash hash={txHash} compact />
+        </div>
+      )}
+
+      {!settled && payment.toWallet && (
+        <div className="pl-1">
+          <PaymentRequestToggle
+            label="Request QR"
+            input={{
+              kind: "net",
+              destination: payment.toWallet,
+              source: payment.fromWallet ?? null,
+              asset: payment.asset,
+              amount: payment.amount,
+              tripId,
+              // Only the debts actually between these two accounts.
+              items: payment.settledDebts
+                .filter((debt) => debt.fromId === payment.fromId && debt.toId === payment.toId)
+                .map((debt) => ({
+                  expenseId: debt.expenseId,
+                  memberId: debt.fromId,
+                  amount: Money.parse(debt.amount).format(),
+                })),
+            }}
+          />
         </div>
       )}
 

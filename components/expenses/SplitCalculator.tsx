@@ -29,8 +29,8 @@ interface SplitCalculatorProps {
   poolBalance?: string | null;
   depositLoading?: boolean;
   onDepositPool?: (amount: string) => Promise<boolean>;
-  /** Enables payment requests from the payer (#326). */
-  reminderContext?: { tripId: string; expenseId: string };
+  /** Enables SEP-0007 payment requests for unpaid shares (#327). */
+  paymentRequest?: { tripId: string; expenseId: string; asset: string };
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -48,7 +48,7 @@ export function SplitCalculator({
   poolBalance,
   depositLoading,
   onDepositPool,
-  reminderContext,
+  paymentRequest,
 }: SplitCalculatorProps) {
   const totalMoney = Money.tryParse(totalAmount) ?? Money.zero();
   const paidCount = shares.filter((s) => s.paid).length;
@@ -123,7 +123,9 @@ export function SplitCalculator({
             poolBalance={poolBalance}
             depositLoading={depositLoading}
             onDepositPool={onDepositPool}
-            reminderContext={reminderContext}
+            paymentRequest={
+              paymentRequest ? { ...paymentRequest, exactAmount: shares[i].amount } : undefined
+            }
           />
         ))}
       </div>
