@@ -17,6 +17,7 @@ import { TripPaymentProgressBanner } from "@/components/trips/TripPaymentProgres
 import { TripTabs, type TripTab } from "@/components/trips/TripTabs";
 import { InviteMemberModal } from "@/components/trips/InviteMemberModal";
 import { RecurringPanel } from "@/components/recurring/RecurringPanel";
+import { TripBudgetCard } from "@/components/budget/TripBudgetCard";
 import { useAuth } from "@/context/AuthContext";
 import { useContractEvents } from "@/hooks/useContractEvents";
 import { useExpense } from "@/hooks/useExpense";
@@ -161,6 +162,7 @@ export default function TripDetailPage() {
             onAddFromRule={canAddExpenses ? openExpenseForm : undefined}
           />
           {publicKey && <TripPaymentProgressBanner shares={myShares} />}
+          <TripBudgetCard tripId={trip.id} expenses={tripExpenses} currentUserPublicKey={publicKey} />
           <TripTabs activeTab={activeTab} onChange={setActiveTab} />
 
           <AnimatePresence mode="wait">
