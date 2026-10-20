@@ -6,6 +6,7 @@ import { LS_TRIPS } from "@/lib/utils/constants";
 import {
   fetchTrips,
   insertTrip,
+  createTripFromCopyRow,
   updateTripRow,
   deleteTripRow,
   addExpenseIdToTrip,
@@ -15,10 +16,13 @@ import {
 import { useRealtimeCollection } from "@/lib/supabase/useRealtimeCollection";
 import { invalidateQueryCaches } from "@/lib/supabase/cacheInvalidation";
 import { useWalletContext } from "./WalletContext";
+import type { TripCopyRequest } from "@/lib/trip/templates";
 
 interface TripContextType {
   trips: Trip[];
   addTrip: (trip: Trip) => Promise<void>;
+  /** Creates a trip from a template or past trip. Safe to retry with the same key. */
+  copyTrip: (request: TripCopyRequest) => Promise<Trip>;
   updateTrip: (id: string, updates: Partial<Trip>) => Promise<void>;
   deleteTrip: (id: string) => Promise<void>;
   addExpenseToTrip: (tripId: string, expenseId: string) => Promise<void>;
@@ -72,6 +76,28 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
         domains: cacheDomainsForMutation("trip_write"),
         tripId: saved.id,
       });
+    },
+    [wallet, mutate]
+  );
+
+  const copyTrip = useCallback(
+    async (request: TripCopyRequest) => {
+      if (!wallet) throw new Error("Sign in with your wallet before creating a trip.");
+
+      const saved = await createTripFromCopyRow(request);
+      // A replayed key returns the trip that already exists, so merge rather
+      // than prepend to avoid a duplicate card.
+      mutate((previous) =>
+        previous.some((t) => t.id === saved.id)
+          ? previous.map((t) => (t.id === saved.id ? saved : t))
+          : [saved, ...previous]
+      );
+      invalidateQueryCaches({
+        wallet,
+        domains: cacheDomainsForMutation("trip_write"),
+        tripId: saved.id,
+      });
+      return saved;
     },
     [wallet, mutate]
   );
@@ -145,6 +171,7 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
     () => ({
       trips,
       addTrip,
+      copyTrip,
       updateTrip,
       deleteTrip,
       addExpenseToTrip,
@@ -159,6 +186,7 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
     [
       trips,
       addTrip,
+      copyTrip,
       updateTrip,
       deleteTrip,
       addExpenseToTrip,
