@@ -17,6 +17,7 @@ import { TripPaymentProgressBanner } from "@/components/trips/TripPaymentProgres
 import { TripTabs, type TripTab } from "@/components/trips/TripTabs";
 import { InviteMemberModal } from "@/components/trips/InviteMemberModal";
 import { TripExportMenu } from "@/components/export/TripExportMenu";
+import { ReminderSchedulePanel } from "@/components/reminders/ReminderSchedulePanel";
 import { useAuth } from "@/context/AuthContext";
 import { useContractEvents } from "@/hooks/useContractEvents";
 import { useExpense } from "@/hooks/useExpense";
@@ -163,6 +164,7 @@ export default function TripDetailPage() {
           {!trip.settled && <TripWalletChangeBanner tripId={trip.id} />}
           {publicKey && <TripPaymentProgressBanner shares={myShares} />}
           <TripExportMenu trip={trip} expenses={tripExpenses} />
+          {publicKey && <ReminderSchedulePanel tripId={trip.id} />}
           <TripTabs activeTab={activeTab} onChange={setActiveTab} />
 
           <AnimatePresence mode="wait">

@@ -165,6 +165,7 @@ export function ExpenseCard({ expense, currentUserPublicKey, onDelete, tripId }:
                 poolBalance={poolBalance}
                 depositLoading={depositLoading}
                 onDepositPool={depositPool}
+                reminderContext={tripId ? { tripId, expenseId: expense.id } : undefined}
               />
 
               {paymentState.status !== "idle" && (
