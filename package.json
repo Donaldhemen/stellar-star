@@ -7,6 +7,9 @@
   },
   "packageManager": "npm@10.8.2",
   "scripts": {
+    "ocr:assets": "node scripts/prepare-ocr-assets.mjs",
+    "predev": "npm run ocr:assets",
+    "prebuild": "npm run ocr:assets",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
