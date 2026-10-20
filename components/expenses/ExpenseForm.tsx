@@ -7,7 +7,7 @@ import { ExpenseMemberList } from "@/components/expenses/ExpenseMemberList";
 import { ExpensePayerSelect } from "@/components/expenses/ExpensePayerSelect";
 import { ExpenseSplitModeControl } from "@/components/expenses/ExpenseSplitModeControl";
 import { ExpenseSplitPreview } from "@/components/expenses/ExpenseSplitPreview";
-import { useExpenseForm } from "@/hooks/useExpenseForm";
+import { useExpenseForm, type ExpenseFormInitialValues } from "@/hooks/useExpenseForm";
 import type { Member } from "@/types/expense";
 
 interface ExpenseFormProps {
@@ -16,6 +16,7 @@ interface ExpenseFormProps {
   currentUserPublicKey?: string | null;
   currentUserName?: string | null;
   defaultMembers?: Member[];
+  initialValues?: ExpenseFormInitialValues;
 }
 
 export function ExpenseForm({
@@ -24,12 +25,14 @@ export function ExpenseForm({
   currentUserPublicKey,
   currentUserName,
   defaultMembers,
+  initialValues,
 }: ExpenseFormProps) {
   const form = useExpenseForm({
     onSuccess,
     currentUserPublicKey,
     currentUserName,
     defaultMembers,
+    initialValues,
   });
 
   return (

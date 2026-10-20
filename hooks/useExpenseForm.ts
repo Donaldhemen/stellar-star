@@ -14,11 +14,20 @@ import { fetchExchangeRate, describeAge } from "@/lib/fx/quote";
 import { convertAssetAmount, toLedgerAmount } from "@/lib/money/assetPrecision";
 import { Money } from "@/lib/money";
 
+/** Prefill for the form, e.g. from a trip's recurring expense rule. */
+export interface ExpenseFormInitialValues {
+  title?: string;
+  totalAmount?: string;
+  splitMode?: SplitMode;
+  paidByMemberId?: string;
+}
+
 export interface UseExpenseFormOptions {
   onSuccess?: (expenseId?: string) => void;
   currentUserPublicKey?: string | null;
   currentUserName?: string | null;
   defaultMembers?: Member[];
+  initialValues?: ExpenseFormInitialValues;
 }
 
 interface ExpenseFormValidationInput {
@@ -77,6 +86,7 @@ export function useExpenseForm({
   currentUserPublicKey,
   currentUserName,
   defaultMembers,
+  initialValues,
 }: UseExpenseFormOptions) {
   const { addExpense } = useExpense();
   const { success: toastSuccess, error: toastError, info: toastInfo } = useToast();
@@ -86,13 +96,19 @@ export function useExpenseForm({
     initialMembersRef.current = resolveInitialMembers(defaultMembers, currentUserName, currentUserPublicKey);
   }
 
-  const [title, setTitle] = useState("");
+  const [title, setTitle] = useState(initialValues?.title ?? "");
   const [description, setDescription] = useState("");
-  const [totalAmount, setTotalAmount] = useState("");
+  const [totalAmount, setTotalAmount] = useState(initialValues?.totalAmount ?? "");
   const [currency, setCurrency] = useState("XLM");
-  const [splitMode, setSplitMode] = useState<SplitMode>("equal");
+  const [splitMode, setSplitMode] = useState<SplitMode>(initialValues?.splitMode ?? "equal");
   const [members, setMembers] = useState<Member[]>(initialMembersRef.current!);
-  const [paidByMemberId, setPaidByMemberId] = useState(initialMembersRef.current![0]?.id ?? "");
+  const [paidByMemberId, setPaidByMemberId] = useState(() => {
+    const initial = initialMembersRef.current!;
+    const preferred = initialValues?.paidByMemberId;
+    return preferred && initial.some((member) => member.id === preferred)
+      ? preferred
+      : initial[0]?.id ?? "";
+  });
   const [submitting, setSubmitting] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   /**

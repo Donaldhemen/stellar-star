@@ -16,6 +16,11 @@ import { TripNotFound } from "@/components/trips/TripNotFound";
 import { TripPaymentProgressBanner } from "@/components/trips/TripPaymentProgressBanner";
 import { TripTabs, type TripTab } from "@/components/trips/TripTabs";
 import { InviteMemberModal } from "@/components/trips/InviteMemberModal";
+import { SaveTripTemplateForm } from "@/components/trips/SaveTripTemplateForm";
+import { DuplicateTripFlow } from "@/components/trips/TripCopyFlow";
+import { TripRecurringRules } from "@/components/trips/TripRecurringRules";
+import { canPerformTripAction } from "@/lib/trip/templates";
+import type { RecurringExpenseRule } from "@/types/trip";
 import { useAuth } from "@/context/AuthContext";
 import { useContractEvents } from "@/hooks/useContractEvents";
 import { useExpense } from "@/hooks/useExpense";
@@ -79,13 +84,17 @@ export function generateTripMetadata({
 export default function TripDetailPage() {
   const params = useParams<{ id: string }>();
   const safeId = sanitizeText(params?.id ?? "");
-  const { getTrip, settleTrip, addExpenseToTrip, isLoading } = useTrip();
+  const { trips, getTrip, settleTrip, addExpenseToTrip, isLoading } = useTrip();
   const { expenses } = useExpense();
   const { publicKey } = useWallet();
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<TripTab>("expenses");
   const [showExpenseForm, setShowExpenseForm] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
+  const [showSaveTemplate, setShowSaveTemplate] = useState(false);
+  const [showDuplicate, setShowDuplicate] = useState(false);
+  // The recurring rule the expense form is pre-filled from, if any.
+  const [ruleForExpense, setRuleForExpense] = useState<RecurringExpenseRule | null>(null);
   const { error: toastError } = useToast();
 
   const trip = getTrip(safeId);
@@ -129,6 +138,14 @@ export default function TripDetailPage() {
     return <TripNotFound />;
   }
 
+  // The creator can always do both; everyone else follows the trip settings.
+  const canAddExpenses = canPerformTripAction(trip, publicKey, "membersCanAddExpenses");
+  const canInvite = canPerformTripAction(trip, publicKey, "membersCanInvite");
+  const openExpenseForm = (rule: RecurringExpenseRule | null) => {
+    setRuleForExpense(rule);
+    setShowExpenseForm(true);
+  };
+
   return (
     <AuthGuard>
       <div className="min-h-screen bg-[#F6F6F6]">
@@ -138,7 +155,14 @@ export default function TripDetailPage() {
           <TripDetailHeader
             trip={trip}
             expenses={tripExpenses}
-            onOpenInvite={() => setShowInviteModal(true)}
+            onOpenInvite={canInvite ? () => setShowInviteModal(true) : undefined}
+            onSaveTemplate={() => setShowSaveTemplate(true)}
+            onDuplicate={() => setShowDuplicate(true)}
+          />
+          <TripRecurringRules
+            rules={trip.recurringRules ?? []}
+            members={trip.members}
+            onAddFromRule={canAddExpenses ? openExpenseForm : undefined}
           />
           {publicKey && <TripPaymentProgressBanner shares={myShares} />}
           <TripTabs activeTab={activeTab} onChange={setActiveTab} />
@@ -149,7 +173,7 @@ export default function TripDetailPage() {
                 expenses={tripExpenses}
                 tripId={trip.id}
                 currentUserPublicKey={publicKey}
-                onAddExpense={() => setShowExpenseForm(true)}
+                onAddExpense={canAddExpenses ? () => openExpenseForm(null) : undefined}
               />
             ) : (
               <motion.div
@@ -174,9 +198,20 @@ export default function TripDetailPage() {
         size="lg"
       >
         <ExpenseForm
+          key={ruleForExpense?.id ?? "blank"}
           currentUserPublicKey={publicKey}
           currentUserName={user?.displayName}
           defaultMembers={trip.members}
+          initialValues={
+            ruleForExpense
+              ? {
+                  title: ruleForExpense.title,
+                  totalAmount: ruleForExpense.amount,
+                  splitMode: ruleForExpense.splitMode,
+                  paidByMemberId: ruleForExpense.paidByMemberId,
+                }
+              : undefined
+          }
           onSuccess={(newExpenseId?: string) => {
             if (newExpenseId) linkExpenseToTrip(trip.id, newExpenseId);
             setShowExpenseForm(false);
@@ -190,6 +225,37 @@ export default function TripDetailPage() {
         isOpen={showInviteModal}
         onClose={() => setShowInviteModal(false)}
       />
+
+      <Modal
+        open={showSaveTemplate}
+        onClose={() => setShowSaveTemplate(false)}
+        title="Save as template"
+        description="Reuse this group's members, recurring expenses and permissions."
+        size="lg"
+      >
+        <SaveTripTemplateForm
+          trip={trip}
+          onSaved={() => setShowSaveTemplate(false)}
+          onCancel={() => setShowSaveTemplate(false)}
+        />
+      </Modal>
+
+      <Modal
+        open={showDuplicate}
+        onClose={() => setShowDuplicate(false)}
+        title="Duplicate trip"
+        description="Review and edit everything before the new trip is created."
+        size="lg"
+      >
+        <DuplicateTripFlow
+          trips={trips}
+          initialTripId={trip.id}
+          currentUserPublicKey={publicKey}
+          currentUserName={user?.displayName}
+          onDone={() => setShowDuplicate(false)}
+          onCancel={() => setShowDuplicate(false)}
+        />
+      </Modal>
     </AuthGuard>
   );
 }

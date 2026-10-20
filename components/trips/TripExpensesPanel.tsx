@@ -9,7 +9,8 @@ interface TripExpensesPanelProps {
   expenses: Expense[];
   tripId: string;
   currentUserPublicKey?: string | null;
-  onAddExpense: () => void;
+  /** Omitted when the trip's permissions do not let this viewer add expenses. */
+  onAddExpense?: () => void;
 }
 
 export function TripExpensesPanel({
@@ -28,13 +29,17 @@ export function TripExpensesPanel({
     >
       <div className="flex items-center justify-between mb-3">
         <h2 className="text-sm font-bold text-[#0F0F14]">Expenses ({expenses.length})</h2>
-        <button
-          onClick={onAddExpense}
-          className="flex items-center gap-1.5 text-xs font-bold px-3 py-2 rounded-xl bg-[#0F0F14] text-[#2DD4BF] hover:bg-[#1A1A22] transition-all"
-        >
-          <Plus size={12} />
-          Add Expense
-        </button>
+        {onAddExpense ? (
+          <button
+            onClick={onAddExpense}
+            className="flex items-center gap-1.5 text-xs font-bold px-3 py-2 rounded-xl bg-[#0F0F14] text-[#2DD4BF] hover:bg-[#1A1A22] transition-all"
+          >
+            <Plus size={12} />
+            Add Expense
+          </button>
+        ) : (
+          <span className="text-[11px] text-[#AAA]">Only the trip creator can add expenses</span>
+        )}
       </div>
       {expenses.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-10 px-4 text-center rounded-xl border border-dashed border-[#E5E5E5]">

@@ -62,8 +62,42 @@ export type TripRow = {
   created_by_wallet: string;
   /** Derived by the `sync_member_wallets` trigger — read-only from the client. */
   member_wallets: string[];
+  /** `date` columns (migration 0008); ISO YYYY-MM-DD strings. */
+  starts_on: string | null;
+  ends_on: string | null;
+  recurring_rules: Json;
+  permissions: Json;
+  source_template_id: string | null;
+  copied_from_trip_id: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type TripTemplateRow = {
+  id: string;
+  owner_wallet: string;
+  name: string;
+  description: string | null;
+  members: Json;
+  recurring_rules: Json;
+  permissions: Json;
+  duration_days: number | null;
+  source_trip_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TripCopyEventRow = {
+  id: string;
+  idempotency_key: string;
+  operation: "trip_to_template" | "template_to_trip" | "trip_to_trip";
+  actor_wallet: string;
+  source_kind: "template" | "trip";
+  source_id: string;
+  target_kind: "template" | "trip";
+  target_id: string;
+  summary: Json;
+  created_at: string;
 };
 
 export type AuthChallengeRow = {
@@ -195,13 +229,49 @@ export type Database = {
       };
       trips: {
         Row: TripRow;
-        Insert: Omit<TripRow, ServerManaged> & {
+        // The structure columns from migration 0008 all have database defaults.
+        Insert: Omit<
+          TripRow,
+          | ServerManaged
+          | "starts_on"
+          | "ends_on"
+          | "recurring_rules"
+          | "permissions"
+          | "source_template_id"
+          | "copied_from_trip_id"
+        > & {
           id?: string;
           created_at?: string;
           expense_ids?: string[];
           settled?: boolean;
+          starts_on?: string | null;
+          ends_on?: string | null;
+          recurring_rules?: Json;
+          permissions?: Json;
+          source_template_id?: string | null;
+          copied_from_trip_id?: string | null;
         };
-        Update: Partial<Omit<TripRow, ServerManaged | "created_by_wallet">>;
+        // Copy provenance is written once, by create_trip_from_copy.
+        Update: Partial<
+          Omit<TripRow, ServerManaged | "created_by_wallet" | "source_template_id" | "copied_from_trip_id">
+        >;
+        Relationships: [];
+      };
+      trip_templates: {
+        Row: TripTemplateRow;
+        Insert: Omit<TripTemplateRow, "id" | "created_at" | "updated_at"> & {
+          id?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Omit<TripTemplateRow, "id" | "owner_wallet" | "created_at" | "updated_at">>;
+        Relationships: [];
+      };
+      trip_copy_events: {
+        Row: TripCopyEventRow;
+        Insert: Omit<TripCopyEventRow, "id" | "created_at"> & { id?: string; created_at?: string };
+        // Append-only: no UPDATE policy exists, so there is no update shape.
+        Update: Record<string, never>;
         Relationships: [];
       };
       trip_invites: {
@@ -386,6 +456,23 @@ export type Database = {
         };
         Returns: ExpenseRow[];
       };
+      create_trip_from_copy: {
+        Args: {
+          p_idempotency_key: string;
+          p_source_kind: "template" | "trip";
+          p_source_id: string;
+          p_trip: Json;
+        };
+        Returns: TripRow[];
+      };
+      save_trip_template: {
+        Args: {
+          p_idempotency_key: string;
+          p_source_trip_id: string;
+          p_template: Json;
+        };
+        Returns: TripTemplateRow[];
+      };
     };
     Enums: { [_ in never]: never };
     CompositeTypes: { [_ in never]: never };
@@ -408,3 +495,5 @@ export type SponsoredAccountInsert = Database["public"]["Tables"]["sponsored_acc
 export type SponsoredAccountUpdate = Database["public"]["Tables"]["sponsored_accounts"]["Update"];
 export type SponsorshipInviteInsert = Database["public"]["Tables"]["sponsorship_invites"]["Insert"];
 export type TripInviteInsert = Database["public"]["Tables"]["trip_invites"]["Insert"];
+export type TripTemplateInsert = Database["public"]["Tables"]["trip_templates"]["Insert"];
+export type TripTemplateUpdate = Database["public"]["Tables"]["trip_templates"]["Update"];
