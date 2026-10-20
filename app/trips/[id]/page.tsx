@@ -120,7 +120,11 @@ export default function TripDetailPage() {
   const myShares = tripExpenses.flatMap((expense) =>
     expense.shares.filter((share) => share.walletAddress === publicKey)
   );
-  const { events: onChainEvents } = useContractEvents(trip?.id, tripExpenses);
+  const isTripSettled = trip?.settled ?? false;
+  const { events: onChainEvents } = useContractEvents(trip?.id, tripExpenses, {
+    isActive: trip ? !isTripSettled : false,
+    isSettled: isTripSettled,
+  });
 
   useTripAutoSettlement(trip, expenses, settleTrip);
 
