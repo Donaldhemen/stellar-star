@@ -16,6 +16,14 @@ import { Money } from "@/lib/money";
 import { isExpenseCategory, type ExpenseCategory } from "@/lib/expense/categories";
 import { parseTagInput, validateTags } from "@/lib/expense/tags";
 
+/** Prefill for the form, e.g. from a trip's recurring expense rule. */
+export interface ExpenseFormInitialValues {
+  title?: string;
+  totalAmount?: string;
+  splitMode?: SplitMode;
+  paidByMemberId?: string;
+}
+
 export interface UseExpenseFormOptions {
   onSuccess?: (expenseId?: string) => void;
   currentUserPublicKey?: string | null;

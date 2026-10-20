@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
-import { Plus, ArrowLeft, Map, Inbox } from "lucide-react";
+import { Plus, ArrowLeft, Map, Inbox, Copy } from "lucide-react";
 import { useTripSearch } from "@/hooks/useTrip";
 import { useExpense } from "@/hooks/useExpense";
 import { useWallet } from "@/hooks/useWallet";
@@ -14,6 +14,7 @@ import { Modal } from "@/components/ui/Modal";
 import { Spinner } from "@/components/ui/Spinner";
 import { TripCard } from "@/components/trips/TripCard";
 import { TripForm } from "@/components/trips/TripForm";
+import { TripCopyFlow } from "@/components/trips/TripCopyFlow";
 import { TripSearch } from "@/components/trips/TripSearch";
 import { useToast } from "@/components/ui/Toast";
 import type { TripFormData, Trip } from "@/types/trip";
@@ -22,7 +23,7 @@ import { settlementAssetOf } from "@/lib/settlement/expenseAsset";
 
 // ─── Empty state ──────────────────────────────────────────────────────────────
 
-function EmptyState({ onNew }: { onNew: () => void }) {
+function EmptyState({ onNew, onCopy }: { onNew: () => void; onCopy: () => void }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 16 }}
@@ -44,6 +45,12 @@ function EmptyState({ onNew }: { onNew: () => void }) {
         <Plus size={15} />
         New Trip
       </button>
+      <button
+        onClick={onCopy}
+        className="mt-3 text-xs font-semibold text-[#888] hover:text-[#0F0F14]"
+      >
+        or start from a saved template
+      </button>
     </motion.div>
   );
 }
@@ -52,12 +59,14 @@ function EmptyState({ onNew }: { onNew: () => void }) {
 
 export default function TripsPage() {
   const [searchQuery, setSearchQuery] = useState("");
-  const { trips, totalTrips, addTrip, deleteTrip, isLoading, isOffline } = useTripSearch(searchQuery);
+  const { trips, allTrips, totalTrips, addTrip, deleteTrip, isLoading, isOffline } =
+    useTripSearch(searchQuery);
   const { expenses } = useExpense();
   const { publicKey } = useWallet();
   const { user } = useAuth();
   const { success: toastSuccess, error: toastError } = useToast();
   const [showForm, setShowForm] = useState(false);
+  const [showCopy, setShowCopy] = useState(false);
   const [creating, setCreating] = useState(false);
  
   const handleDeleteTrip = async (id: string) => {
@@ -145,13 +154,22 @@ export default function TripsPage() {
             </div>
 
             {totalTrips > 0 && (
-              <button
-                onClick={() => setShowForm(true)}
-                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#0F0F14] text-[#2DD4BF] text-sm font-bold hover:bg-[#1A1A22] transition-all shrink-0"
-              >
-                <Plus size={14} />
-                New
-              </button>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => setShowCopy(true)}
+                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-[#E5E5E5] bg-white text-[#0F0F14] text-sm font-bold hover:bg-[#F0F0F0] transition-all"
+                >
+                  <Copy size={14} />
+                  <span className="hidden sm:inline">From template</span>
+                </button>
+                <button
+                  onClick={() => setShowForm(true)}
+                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#0F0F14] text-[#2DD4BF] text-sm font-bold hover:bg-[#1A1A22] transition-all"
+                >
+                  <Plus size={14} />
+                  New
+                </button>
+              </div>
             )}
           </div>
 
@@ -171,7 +189,7 @@ export default function TripsPage() {
               <Spinner size={32} className="text-[#2DD4BF]" />
             </div>
           ) : totalTrips === 0 ? (
-            <EmptyState onNew={() => setShowForm(true)} />
+            <EmptyState onNew={() => setShowForm(true)} onCopy={() => setShowCopy(true)} />
           ) : trips.length === 0 ? (
             <p className="rounded-xl border border-[#E5E5E5] bg-white px-4 py-8 text-center text-sm text-[#888]">
               No trips match your search.
@@ -224,6 +242,23 @@ export default function TripsPage() {
           currentUserName={user?.displayName}
           onSubmit={handleCreate}
           onCancel={() => setShowForm(false)}
+        />
+      </Modal>
+
+      {/* Start from a template or a past trip */}
+      <Modal
+        open={showCopy}
+        onClose={() => setShowCopy(false)}
+        title="Start from a template or past trip"
+        description="Members, recurring expenses and permissions carry over. Balances and payments never do."
+        size="lg"
+      >
+        <TripCopyFlow
+          trips={allTrips}
+          currentUserPublicKey={publicKey}
+          currentUserName={user?.displayName}
+          onCreated={() => setShowCopy(false)}
+          onCancel={() => setShowCopy(false)}
         />
       </Modal>
     </AuthGuard>
