@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { canUploadReceipt } from "@/lib/receipts/access";
+import { hasExpensePermission } from "@/lib/supabase/queries";
 import { inspectReceiptUpload } from "@/lib/receipts/inspect";
 import { receiptMaxBytes } from "@/lib/receipts/policy";
 import { listReceipts, loadExpenseAccess, storeReceipt } from "@/lib/receipts/store";
@@ -58,8 +58,8 @@ export async function POST(request: NextRequest, context: Context) {
     const access = await loadExpenseAccess(clients.userClient, id);
     // Indistinguishable from a missing expense, so ids cannot be probed.
     if (!access) return receiptError("Expense not found.", 404);
-    if (!canUploadReceipt(access, clients.wallet)) {
-      return receiptError("Only the person who paid for this expense can attach a receipt.", 403);
+    if (!(await hasExpensePermission(id, "receipts.manage", clients.userClient))) {
+      return receiptError("You do not have permission to attach a receipt to this expense.", 403);
     }
 
     let form: FormData;
