@@ -84,7 +84,7 @@ export function ExpenseForm({
       />
 
       <ExpenseDescriptionField value={form.description} onChange={form.setDescription}
-        maxLength={receipt ? 12000 : Math.max(100, form.description.length)} />
+        maxLength={receipt || form.description.length > 100 ? 12000 : 100} />
 
       <ExpenseLabelsFields
         category={form.category}
