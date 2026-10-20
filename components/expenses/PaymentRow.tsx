@@ -9,6 +9,7 @@ import { STELLAR_EXPLORER } from "@/lib/utils/constants";
 import { cn } from "@/lib/utils";
 import { PayButton } from "@/components/payment/PayButton";
 import { QRToggle } from "@/components/payment/QRCodeDisplay";
+import { PaymentRequestToggle } from "@/components/payment/PaymentRequestPanel";
 import { ReceiptModal } from "@/components/expenses/ReceiptModal";
 import { trimToMemoBytes } from "@/lib/stellar/buildTransaction";
 import { Money } from "@/components/ui/Money";
@@ -31,6 +32,11 @@ interface PaymentRowProps {
   poolBalance?: string | null;
   depositLoading?: boolean;
   onDepositPool?: (amount: string) => Promise<boolean>;
+  /**
+   * Enables a SEP-0007 payment request for this share (#327). `exactAmount`
+   * is the stored share amount; `share.amount` may be rounded for display.
+   */
+  paymentRequest?: { tripId: string; expenseId: string; asset: string; exactAmount: string };
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -46,6 +52,7 @@ export function PaymentRow({
   poolBalance,
   depositLoading,
   onDepositPool,
+  paymentRequest,
 }: PaymentRowProps) {
   const [showReceipt, setShowReceipt] = useState(false);
   const explorerUrl = share.walletAddress
@@ -191,12 +198,27 @@ export function PaymentRow({
           </div>
         )}
 
-        {/* QR toggle - only if unpaid and has wallet address */}
-        {!share.paid && share.walletAddress && (
+        {/* Payment request / QR - only if unpaid, owed to a payer with a wallet */}
+        {!share.paid && !isPayerRow && payerWalletAddress && (
           <div className="pl-11">
-            <QRToggle
-              data={{ destination: share.walletAddress, amount: share.amount, memo }}
-            />
+            {paymentRequest ? (
+              <PaymentRequestToggle
+                input={{
+                  kind: "share",
+                  destination: payerWalletAddress,
+                  source: share.walletAddress ?? null,
+                  asset: paymentRequest.asset,
+                  amount: paymentRequest.exactAmount,
+                  tripId: paymentRequest.tripId,
+                  items: [
+                    { expenseId: paymentRequest.expenseId, memberId: share.memberId, amount: paymentRequest.exactAmount },
+                  ],
+                }}
+              />
+            ) : (
+              // The QR pays the payer of the expense, never the debtor's own account.
+              <QRToggle data={{ destination: payerWalletAddress, amount: share.amount, memo }} />
+            )}
           </div>
         )}
       </motion.div>
