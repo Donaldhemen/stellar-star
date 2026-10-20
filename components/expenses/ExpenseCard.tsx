@@ -50,13 +50,17 @@ export function ExpenseCard({ expense, currentUserPublicKey, onDelete, tripId }:
   // rows saved before #323. Never float division.
   const fiatAmount = enteredAmountOf(expense);
 
-  const handlePay = async (share: SplitShare) => {
+  const handlePay = async (share: SplitShare, amount?: string) => {
     setPayingShareId(share.memberId);
+    // Pay against the stored share, not the display-adjusted copy the
+    // calculator renders, so the remaining balance is computed exactly.
+    const stored = expense.shares.find((s) => s.memberId === share.memberId) ?? share;
     await payShare({
-      share,
+      share: stored,
       expenseTitle: expense.title,
       payerWalletAddress: payer?.walletAddress ?? "",
       tripId,
+      amount,
     });
     setPayingShareId(null);
   };

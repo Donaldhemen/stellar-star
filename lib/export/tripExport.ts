@@ -12,6 +12,7 @@
 
 import { Money } from "@/lib/money";
 import { settlementAssetOf } from "@/lib/settlement/expenseAsset";
+import { shareBalance } from "@/lib/settlement/installments";
 import { computeNetBalances, type RawDebt } from "@/lib/settlement/simplify";
 import type { Expense } from "@/types/expense";
 import type { Trip } from "@/types/trip";
@@ -123,26 +124,44 @@ export function buildExportRows(
 
     for (const share of expense.shares) {
       const isPayer = share.memberId === expense.paidByMemberId;
-      const shareCells = (recordType: string, note: string): CsvCell[] => [
+      const shareCells = (
+        recordType: string,
+        note: string,
+        value: string = share.amount,
+        txHash: string | undefined = share.txHash,
+        paid: boolean = share.paid,
+      ): CsvCell[] => [
         text(recordType),
         ...head,
         text(share.memberId),
         text(share.name),
         text(share.walletAddress ?? ""),
-        amount(share.amount),
+        amount(value),
         text(asset),
         amount(null),
         text(null),
         amount(null),
         text(null),
         text(null),
-        raw(share.paid),
-        text(share.txHash ?? ""),
-        text(explorerTxUrl(share.txHash, explorerBase) ?? ""),
+        raw(paid),
+        text(txHash ?? ""),
+        text(explorerTxUrl(txHash, explorerBase) ?? ""),
         text(note),
       ];
 
       rows.push(shareCells("share", isPayer ? "Payer's own share; no payment needed" : ""));
+      // One row per partial payment (#325), each with its own transaction.
+      for (const installment of share.installments ?? []) {
+        rows.push(
+          shareCells(
+            "installment",
+            `Installment #${installment.seq}${installment.onChain ? " (recorded on-chain)" : ""}`,
+            installment.amount,
+            installment.txHash,
+            true,
+          ),
+        );
+      }
       if (share.paid && !isPayer && !TX_HASH.test(share.txHash ?? "")) {
         rows.push(shareCells("adjustment", "Marked paid without an on-chain transaction"));
       }
@@ -202,14 +221,17 @@ export function computeTripBalances(trip: Trip, expenses: Expense[]): AssetBalan
       if (!nameOf.has(share.memberId)) {
         nameOf.set(share.memberId, { id: share.memberId, name: share.name, walletAddress: share.walletAddress });
       }
-      if (!payer || share.memberId === payer.id || share.paid) continue;
+      if (!payer || share.memberId === payer.id) continue;
+      // Partly paid shares (#325) owe only their remaining balance.
+      const balance = shareBalance(share);
+      if (balance.fullySettled) continue;
       debts.push({
         expenseId: expense.id,
         fromId: share.memberId,
         toId: payer.id,
         from: share.name,
         to: payer.name,
-        amount: share.amount,
+        amount: balance.remaining,
         asset,
         fromWallet: share.walletAddress,
         toWallet: payer.walletAddress,

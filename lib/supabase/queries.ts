@@ -31,6 +31,8 @@ import {
   type ConflictDetails,
 } from "@/lib/expense/conflictResolver";
 import type { QueryCacheDomain } from "./cacheInvalidation";
+import { applyInstallment, markInstallmentProof, type NewInstallment } from "@/lib/settlement/installments";
+import { Money } from "@/lib/money";
 import {
   normalizePermissions,
   normalizeRecurringRules,
@@ -886,6 +888,169 @@ export async function markSharePaidRow(
     );
   }
   return rowToExpense(result.data as ExpenseRow);
+}
+
+/** SQLSTATE raised by `record_share_installment` for an overpayment. */
+const PG_CHECK_VIOLATION = "23514";
+
+/** Raised when an installment would push a share past what it owes (#325). */
+export class InstallmentRejectedError extends DatabaseError {
+  constructor(
+    message: string,
+    readonly reason: "OVERPAYMENT" | "ALREADY_SETTLED" | "NON_POSITIVE",
+    cause?: unknown,
+  ) {
+    super(message, PG_CHECK_VIOLATION, cause);
+    this.name = "InstallmentRejectedError";
+  }
+}
+
+function installmentPayload(installment: NewInstallment): Json {
+  const payload: Record<string, Json> = {
+    seq: installment.seq,
+    amount: installment.amount,
+    txHash: installment.txHash.trim().toLowerCase(),
+    claimId: installment.claimId,
+    ledger: installment.ledger ?? null,
+    attestationNonce: installment.attestationNonce ?? null,
+    verified: installment.verified ?? false,
+    onChain: installment.onChain ?? false,
+    paidAt: installment.paidAt ?? new Date().toISOString(),
+  };
+  return payload;
+}
+
+/**
+ * Appends one installment to a member's share (#325).
+ *
+ * Goes through the `record_share_installment` RPC, which locks the expense row
+ * and re-checks the remaining balance in integer stroops, so two installments
+ * racing for the same balance cannot both land. If the RPC is not deployed
+ * (migration 0012 not applied) it falls back to a compare-and-swap write on
+ * `updated_at` using the same pure rules from lib/settlement/installments.ts.
+ *
+ * Idempotent on the transaction hash: recording a payment that is already on
+ * the share returns the expense unchanged.
+ */
+export async function recordShareInstallmentRow(
+  expenseId: string,
+  memberId: string,
+  installment: NewInstallment,
+  client: StellarStarClient = requireAuthenticatedClient()
+): Promise<Expense> {
+  const amountStroops = Money.parse(installment.amount).toStroops().toString();
+  const payload = { ...(installmentPayload(installment) as Record<string, Json>), amountStroops };
+
+  const { data: rpcData, error: rpcError } = await client.rpc("record_share_installment", {
+    p_expense_id: expenseId,
+    p_member_id: memberId,
+    p_installment: payload as Json,
+  });
+
+  if (!rpcError && Array.isArray(rpcData) && rpcData.length > 0) {
+    return rowToExpense(rpcData[0] as ExpenseRow);
+  }
+  if (rpcError && rpcError.code === PG_CHECK_VIOLATION) {
+    const reason = /already fully settled/i.test(rpcError.message)
+      ? "ALREADY_SETTLED"
+      : /greater than zero/i.test(rpcError.message)
+        ? "NON_POSITIVE"
+        : "OVERPAYMENT";
+    throw new InstallmentRejectedError(rpcError.message, reason, rpcError);
+  }
+  if (rpcError && rpcError.code !== PG_FUNCTION_MISSING) {
+    throw toDatabaseError(rpcError, "record this installment");
+  }
+
+  // Fallback: optimistic compare-and-swap, retried a few times under contention.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { data: fresh, error: fetchError } = await client
+      .from("expenses")
+      .select("shares, updated_at")
+      .eq("id", expenseId)
+      .maybeSingle();
+
+    if (fetchError) throw toDatabaseError(fetchError, "record this installment");
+    if (!fresh) {
+      throw new DatabaseError(
+        "Payment sent on Stellar, but the expense could not be found. Make sure your wallet address is listed on this expense."
+      );
+    }
+
+    const shares = (fresh.shares ?? []) as unknown as SplitShare[];
+    const target = shares.find((share) => share.memberId === memberId);
+    if (!target) throw new DatabaseError("That share is not on this expense.");
+
+    const applied = applyInstallment(target, installment);
+    if (!applied.ok) throw new InstallmentRejectedError(applied.message, applied.code);
+    if (applied.duplicate) {
+      const { data: row, error } = await client
+        .from("expenses")
+        .select(EXPENSE_COLUMNS)
+        .eq("id", expenseId)
+        .single();
+      if (error) throw toDatabaseError(error, "record this installment");
+      return rowToExpense(row as ExpenseRow);
+    }
+
+    const nextShares = shares.map((share) => (share.memberId === memberId ? applied.share : share));
+    const settled = nextShares.length > 0 && nextShares.every((share) => share.paid);
+
+    const result = await client
+      .from("expenses")
+      .update({ shares: nextShares as unknown as ExpenseUpdate["shares"], settled })
+      .eq("id", expenseId)
+      .eq("updated_at", fresh.updated_at)
+      .select(EXPENSE_COLUMNS)
+      .maybeSingle();
+
+    if (result.error) throw toDatabaseError(result.error, "record this installment");
+    if (result.data) return rowToExpense(result.data as ExpenseRow);
+    // Another writer changed the row between read and write: re-read and retry.
+  }
+
+  throw new DatabaseError(
+    "Payment sent on Stellar, but the installment could not be recorded because the expense kept changing. Reload to reconcile it."
+  );
+}
+
+/**
+ * Stamps proof onto an installment that is already recorded: the attestation
+ * nonce and the contract record. Metadata only — amounts and the share's
+ * `paid` flag are never touched here, so a stale write cannot unsettle money.
+ */
+export async function updateInstallmentProofRow(
+  expenseId: string,
+  memberId: string,
+  txHash: string,
+  proof: { verified?: boolean; onChain?: boolean; attestationNonce?: string | null; ledger?: number | null },
+  client: StellarStarClient = requireAuthenticatedClient()
+): Promise<Expense | null> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { data: fresh, error: fetchError } = await client
+      .from("expenses")
+      .select("shares, updated_at")
+      .eq("id", expenseId)
+      .maybeSingle();
+    if (fetchError) throw toDatabaseError(fetchError, "update installment proof");
+    if (!fresh) return null;
+
+    const shares = (fresh.shares ?? []) as unknown as SplitShare[];
+    const nextShares = shares.map((share) =>
+      share.memberId === memberId ? markInstallmentProof(share, txHash, proof) : share
+    );
+
+    const result = await client
+      .from("expenses")
+      .update({ shares: nextShares as unknown as ExpenseUpdate["shares"] })
+      .eq("id", expenseId)
+      .eq("updated_at", fresh.updated_at)
+      .select(EXPENSE_COLUMNS)
+      .maybeSingle();
+    if (result.error) throw toDatabaseError(result.error, "update installment proof");
+    if (result.data) return rowToExpense(result.data as ExpenseRow);
+  }
+  return null;
 }
 
 /**

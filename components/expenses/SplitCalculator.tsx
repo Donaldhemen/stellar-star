@@ -16,8 +16,8 @@ interface SplitCalculatorProps {
   payerName: string;
   totalAmount: string;
   expenseTitle?: string;
-  /** Called when user clicks Pay on a row. */
-  onPay?: (share: SplitShare) => void;
+  /** Called when user clicks Pay on a row; `amount` is set for a partial payment. */
+  onPay?: (share: SplitShare, amount?: string) => void;
   /** ID of the share whose payment is currently in-flight (shows spinner). */
   payingShareId?: string | null;
   /** Disable pay buttons */
