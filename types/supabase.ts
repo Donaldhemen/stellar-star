@@ -758,6 +758,14 @@ export type Database = {
         };
         Returns: ExpenseRow[];
       };
+      record_share_installment: {
+        Args: {
+          p_expense_id: string;
+          p_member_id: string;
+          p_installment: Json;
+        };
+        Returns: ExpenseRow[];
+      };
       request_contact_wallet_change: {
         Args: { p_contact_id: string; p_new_wallet: string };
         Returns: ContactWalletChangeRow[];
