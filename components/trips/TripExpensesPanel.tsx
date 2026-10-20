@@ -1,13 +1,15 @@
 "use client";
 
-import { AnimatePresence, motion } from "framer-motion";
+import { motion } from "framer-motion";
 import { Plus, ReceiptText } from "lucide-react";
-import { ExpenseCard } from "@/components/expenses/ExpenseCard";
-import type { Expense } from "@/types/expense";
+import { ExpenseHistoryList } from "@/components/expenses/ExpenseHistoryList";
+import type { Expense, Member } from "@/types/expense";
 
 interface TripExpensesPanelProps {
   expenses: Expense[];
   tripId: string;
+  /** Trip members, offered as payers in the history filters. */
+  members?: Member[];
   currentUserPublicKey?: string | null;
   onAddExpense: () => void;
 }
@@ -15,6 +17,7 @@ interface TripExpensesPanelProps {
 export function TripExpensesPanel({
   expenses,
   tripId,
+  members,
   currentUserPublicKey,
   onAddExpense,
 }: TripExpensesPanelProps) {
@@ -42,18 +45,12 @@ export function TripExpensesPanel({
           <p className="text-sm text-[#AAA]">No expenses in this trip yet.</p>
         </div>
       ) : (
-        <div className="space-y-3">
-          <AnimatePresence mode="popLayout">
-            {expenses.map((expense) => (
-              <ExpenseCard
-                key={expense.id}
-                expense={expense}
-                currentUserPublicKey={currentUserPublicKey}
-                tripId={tripId}
-              />
-            ))}
-          </AnimatePresence>
-        </div>
+        <ExpenseHistoryList
+          expenses={expenses}
+          tripId={tripId}
+          members={members}
+          currentUserPublicKey={currentUserPublicKey}
+        />
       )}
     </motion.div>
   );

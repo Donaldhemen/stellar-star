@@ -1,3 +1,5 @@
+import type { ExpenseCategory } from "@/lib/expense/categories";
+
 export type SplitMode = "equal" | "custom";
 
 export interface Member {
@@ -45,6 +47,13 @@ export interface Expense {
    * Absent on rows created before multi-asset support, which all settle native.
    */
   settlementAsset?: string | null;
+  /**
+   * One of `EXPENSE_CATEGORIES` (lib/expense/categories.ts). Absent on
+   * uncategorized expenses, which includes every row created before #317.
+   */
+  category?: ExpenseCategory | null;
+  /** Normalized labels (see lib/expense/tags.ts); organization only, never money. */
+  tags?: string[];
   splitMode: SplitMode;
   paidByMemberId: string;
   members: Member[];

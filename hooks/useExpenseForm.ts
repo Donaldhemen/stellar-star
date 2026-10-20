@@ -13,6 +13,8 @@ import type { Expense, Member, SplitMode } from "@/types/expense";
 import { fetchExchangeRate, describeAge } from "@/lib/fx/quote";
 import { convertAssetAmount, toLedgerAmount } from "@/lib/money/assetPrecision";
 import { Money } from "@/lib/money";
+import { isExpenseCategory, type ExpenseCategory } from "@/lib/expense/categories";
+import { parseTagInput, validateTags } from "@/lib/expense/tags";
 
 export interface UseExpenseFormOptions {
   onSuccess?: (expenseId?: string) => void;
@@ -26,6 +28,8 @@ interface ExpenseFormValidationInput {
   totalAmount: string;
   currency: string;
   members: Member[];
+  /** Normalized tags; optional so existing callers keep validating as before. */
+  tags?: string[];
 }
 
 export function blankExpenseMember(): Member {
@@ -37,10 +41,14 @@ export function validateExpenseFormFields({
   totalAmount,
   currency,
   members,
+  tags = [],
 }: ExpenseFormValidationInput): Record<string, string> {
   const errors: Record<string, string> = {};
 
   if (!title.trim()) errors.title = "Title is required.";
+
+  const tagError = validateTags(tags);
+  if (tagError) errors.tags = tagError;
 
   const amountError = validateAmount(totalAmount, currency);
   if (amountError) {
@@ -90,6 +98,8 @@ export function useExpenseForm({
   const [description, setDescription] = useState("");
   const [totalAmount, setTotalAmount] = useState("");
   const [currency, setCurrency] = useState("XLM");
+  const [category, setCategoryState] = useState<ExpenseCategory | "">("");
+  const [tagsInput, setTagsInput] = useState("");
   const [splitMode, setSplitMode] = useState<SplitMode>("equal");
   const [members, setMembers] = useState<Member[]>(initialMembersRef.current!);
   const [paidByMemberId, setPaidByMemberId] = useState(initialMembersRef.current![0]?.id ?? "");
@@ -109,6 +119,10 @@ export function useExpenseForm({
     return calculateSplit(amount, namedMembers, paidByMemberId, splitMode);
   }, [totalAmount, namedMembers, paidByMemberId, splitMode]);
   const payerName = members.find((member) => member.id === paidByMemberId)?.name || "Payer";
+  const tags = useMemo(() => parseTagInput(tagsInput), [tagsInput]);
+  const setCategory = useCallback((value: string) => {
+    setCategoryState(isExpenseCategory(value) ? value : "");
+  }, []);
 
   useEffect(() => {
     if (!members.find((member) => member.id === paidByMemberId)) {
@@ -130,10 +144,10 @@ export function useExpenseForm({
   };
 
   const validate = useCallback(() => {
-    const nextErrors = validateExpenseFormFields({ title, totalAmount, currency, members });
+    const nextErrors = validateExpenseFormFields({ title, totalAmount, currency, members, tags });
     setErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
-  }, [title, totalAmount, currency, members]);
+  }, [title, totalAmount, currency, members, tags]);
 
   const handleSubmit = useCallback(
     async (event: FormEvent) => {
@@ -205,6 +219,8 @@ export function useExpenseForm({
           currency,
           exchangeRate,
           exchangeRateTimestamp,
+          category: category || null,
+          tags,
           splitMode,
           paidByMemberId,
           members: cleanMembers,
@@ -236,12 +252,14 @@ export function useExpenseForm({
     // entirely and persisted the typed amount tagged XLM.
     [
       addExpense,
+      category,
       currency,
       description,
       members,
       onSuccess,
       paidByMemberId,
       splitMode,
+      tags,
       title,
       toastError,
       toastInfo,
@@ -260,6 +278,11 @@ export function useExpenseForm({
     setTotalAmount,
     currency,
     setCurrency,
+    category,
+    setCategory,
+    tagsInput,
+    setTagsInput,
+    tags,
     splitMode,
     setSplitMode,
     members,
