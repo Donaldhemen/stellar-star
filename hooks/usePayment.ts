@@ -54,6 +54,7 @@ import {
   InstallmentRejectedError,
 } from "@/lib/supabase/queries";
 import type { SplitShare } from "@/types/expense";
+import { trackAnalyticsEvent } from "@/lib/analytics/sink";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -591,6 +592,12 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
           }
         }
 
+        const startTime = Date.now();
+        trackAnalyticsEvent("payment_started", {
+          currency: "XLM",
+          on_chain: Boolean(CONTRACT_ID && tripId),
+        });
+
         setPaymentState({ status: "building" });
         // The sequence leads so it survives the 28-byte memo trim.
         const memoText = plan.isInstallment
@@ -757,6 +764,11 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
         }
 
         if (onChainError) {
+          trackAnalyticsEvent("payment_completed", {
+            currency: "XLM",
+            on_chain: false,
+            duration_ms: Date.now() - startTime,
+          });
           setPaymentState({
             status: "partial_success",
             hash: result.hash,
@@ -786,6 +798,12 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
           return;
         }
 
+        trackAnalyticsEvent("payment_completed", {
+          currency: "XLM",
+          on_chain: onChain,
+          duration_ms: Date.now() - startTime,
+        });
+
         setPaymentState({ status: "success", hash: result.hash, ledger: finalLedger, onChain });
         toastSuccess(
           plan.isInstallment
@@ -804,6 +822,11 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
         const message    = err instanceof Error ? err.message : "Payment failed. Please try again.";
         const isRejected = /reject|denied|cancel/i.test(message.toLowerCase());
         const display    = isRejected ? "Transaction cancelled in wallet." : message;
+
+        trackAnalyticsEvent("payment_failed", {
+          currency: "XLM",
+          error_code: isRejected ? "user_rejected" : "payment_failed",
+        });
 
       setPaymentState({ status: "error", message: display });
       reportError(

@@ -1,4 +1,5 @@
 import type { Expense, Member, SplitMode } from "./expense";
+import type { TravelWorkspace } from "./workspace";
 
 /**
  * What non-creator members are allowed to do inside a trip. The creator can
@@ -47,6 +48,8 @@ export interface Trip {
   sourceTemplateId?: string;
   /** Provenance: the past trip this trip was duplicated from, if any. */
   copiedFromTripId?: string;
+  /** Lightweight travel workspace: itinerary, checklists, booking references */
+  workspace?: TravelWorkspace;
 }
 
 export type TripFormData = {

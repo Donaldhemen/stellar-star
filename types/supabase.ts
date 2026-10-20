@@ -73,6 +73,7 @@ export type TripRow = {
   permissions: Json;
   source_template_id: string | null;
   copied_from_trip_id: string | null;
+  workspace?: Json | null;
   created_at: string;
   updated_at: string;
 };

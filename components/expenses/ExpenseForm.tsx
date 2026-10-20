@@ -2,6 +2,7 @@
 
 import { Input } from "@/components/ui/Input";
 import { ExpenseDescriptionField } from "@/components/expenses/ExpenseDescriptionField";
+import { ExpenseLabelsFields } from "@/components/expenses/ExpenseLabelsFields";
 import { ExpenseFormActions } from "@/components/expenses/ExpenseFormActions";
 import { ExpenseFxPanel } from "@/components/expenses/ExpenseFxPanel";
 import { ExpenseMemberList } from "@/components/expenses/ExpenseMemberList";

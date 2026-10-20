@@ -9,6 +9,7 @@
 import type { PostgrestError } from "@supabase/supabase-js";
 import type { Expense, Member, SplitShare } from "@/types/expense";
 import type { Trip, TripTemplate } from "@/types/trip";
+import { normalizeWorkspace } from "@/types/workspace";
 import type {
   ExpenseInsert,
   ExpenseRow,
@@ -251,6 +252,7 @@ export function rowToTrip(row: TripRow): Trip {
     permissions: normalizePermissions(row.permissions),
     sourceTemplateId: row.source_template_id ?? undefined,
     copiedFromTripId: row.copied_from_trip_id ?? undefined,
+    workspace: normalizeWorkspace(row.workspace),
   };
 }
 
@@ -393,6 +395,7 @@ export function tripToInsert(trip: Trip, creatorWallet: string): TripInsert {
     ends_on: trip.endsOn ?? null,
     recurring_rules: normalizeRecurringRules(trip.recurringRules) as unknown as Json,
     permissions: normalizePermissions(trip.permissions) as unknown as Json,
+    workspace: (trip.workspace ? normalizeWorkspace(trip.workspace) : null) as unknown as Json,
   };
 }
 
@@ -413,6 +416,9 @@ export function tripToUpdate(updates: Partial<Trip>): TripUpdate {
   if (updates.permissions !== undefined) {
     patch.permissions = normalizePermissions(updates.permissions) as unknown as Json;
   }
+  if (updates.workspace !== undefined) {
+    patch.workspace = normalizeWorkspace(updates.workspace) as unknown as Json;
+  }
   return patch;
 }
 
@@ -424,7 +430,7 @@ const USER_COLUMNS = "id, wallet_address, display_name, created_at, updated_at, 
 const EXPENSE_COLUMNS =
   "id, title, description, total_amount, currency, exchange_rate, exchange_rate_timestamp, exchange_rate_source, entered_amount, settlement_asset, split_mode, paid_by_member_id, members, shares, settled, created_by_wallet, member_wallets, created_at, updated_at";
 const TRIP_COLUMNS =
-  "id, name, description, members, expense_ids, settled, created_by_wallet, member_wallets, starts_on, ends_on, recurring_rules, permissions, source_template_id, copied_from_trip_id, created_at, updated_at";
+  "id, name, description, members, expense_ids, settled, created_by_wallet, member_wallets, starts_on, ends_on, recurring_rules, permissions, source_template_id, copied_from_trip_id, workspace, created_at, updated_at";
 const TRIP_TEMPLATE_COLUMNS =
   "id, owner_wallet, name, description, members, recurring_rules, permissions, duration_days, source_trip_id, created_at, updated_at";
 const SETTLEMENT_INTENT_COLUMNS =

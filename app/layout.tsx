@@ -86,6 +86,9 @@ export const viewport: Viewport = {
 };
 
 import { LocaleProvider } from "@/context/LocaleContext";
+import { AnalyticsProvider } from "@/context/AnalyticsContext";
+import { ConsentBanner } from "@/components/analytics/ConsentBanner";
+import { ConsentModal } from "@/components/analytics/ConsentModal";
 
 export default function RootLayout({
   children,
@@ -96,20 +99,24 @@ export default function RootLayout({
     <html lang="en" className="scroll-smooth">
       <body className={`${poppins.className} bg-[#F6F6F6] text-[#0F0F14] font-sans antialiased`}>
         <LocaleProvider>
-          <ToastProvider>
-            <WalletProvider>
-              <AuthProvider>
-                <ExpenseProvider>
-                  <TripProvider>
-                    <ConfigProvider>
-                      <NetworkMismatchBanner />
-                      {children}
-                    </ConfigProvider>
-                  </TripProvider>
-                </ExpenseProvider>
-              </AuthProvider>
-            </WalletProvider>
-          </ToastProvider>
+          <AnalyticsProvider>
+            <ToastProvider>
+              <WalletProvider>
+                <AuthProvider>
+                  <ExpenseProvider>
+                    <TripProvider>
+                      <ConfigProvider>
+                        <NetworkMismatchBanner />
+                        {children}
+                        <ConsentBanner />
+                        <ConsentModal />
+                      </ConfigProvider>
+                    </TripProvider>
+                  </ExpenseProvider>
+                </AuthProvider>
+              </WalletProvider>
+            </ToastProvider>
+          </AnalyticsProvider>
         </LocaleProvider>
       </body>
     </html>
