@@ -3,6 +3,7 @@
 import { Input } from "@/components/ui/Input";
 import { ExpenseDescriptionField } from "@/components/expenses/ExpenseDescriptionField";
 import { ExpenseFormActions } from "@/components/expenses/ExpenseFormActions";
+import { ExpenseLabelsFields } from "@/components/expenses/ExpenseLabelsFields";
 import { ExpenseMemberList } from "@/components/expenses/ExpenseMemberList";
 import { ExpensePayerSelect } from "@/components/expenses/ExpensePayerSelect";
 import { ExpenseSplitModeControl } from "@/components/expenses/ExpenseSplitModeControl";
@@ -47,6 +48,15 @@ export function ExpenseForm({
       />
 
       <ExpenseDescriptionField value={form.description} onChange={form.setDescription} />
+
+      <ExpenseLabelsFields
+        category={form.category}
+        onCategoryChange={form.setCategory}
+        tagsInput={form.tagsInput}
+        onTagsInputChange={form.setTagsInput}
+        tags={form.tags}
+        error={form.errors.tags}
+      />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <Input

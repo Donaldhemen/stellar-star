@@ -273,7 +273,8 @@ BEGIN
     || jsonb_build_object('total_amount', old_json -> 'total_amount')
     || jsonb_build_object('currency', old_json -> 'currency')
     || jsonb_build_object('exchange_rate', old_json -> 'exchange_rate')
-    || jsonb_build_object('exchange_rate_timestamp', old_json -> 'exchange_rate_timestamp');
+    || jsonb_build_object('exchange_rate_timestamp', old_json -> 'exchange_rate_timestamp')
+    || jsonb_build_object('settlement_asset', old_json -> 'settlement_asset');
 
   RETURN jsonb_populate_record(NEW, new_json);
 END;

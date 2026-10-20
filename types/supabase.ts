@@ -39,6 +39,12 @@ export type ExpenseRow = {
   currency: string;
   exchange_rate: string | null;
   exchange_rate_timestamp: string | null;
+  /** Canonical Stellar asset key; NULL means native XLM (every pre-#317 row). Frozen on update. */
+  settlement_asset: string | null;
+  /** Checked against EXPENSE_CATEGORIES by `expenses_category_check`. */
+  category: string | null;
+  /** Normalized by the `trg_05_expenses_normalize_labels` trigger. */
+  tags: string[];
   split_mode: "equal" | "custom";
   paid_by_member_id: string;
   members: Json;
@@ -185,6 +191,26 @@ export type SponsorshipInviteRow = {
   created_at: string;
 };
 
+export type ExpenseReceiptRow = {
+  id: string;
+  /** NULL once the expense is deleted; the retention sweep then purges the file. */
+  expense_id: string | null;
+  storage_path: string;
+  file_name: string | null;
+  content_type: string;
+  size_bytes: number;
+  checksum_sha256: string;
+  caption: string | null;
+  status: "active" | "quarantined" | "removed";
+  scan_result: Json;
+  uploaded_by_wallet: string;
+  created_at: string;
+  retain_until: string;
+  removed_at: string | null;
+  removed_by_wallet: string | null;
+  removal_reason: "user" | "retention" | "expense_deleted" | null;
+};
+
 export type SchemaMigrationRow = {
   version: string;
   name: string;
@@ -215,16 +241,22 @@ export type Database = {
       };
       expenses: {
         Row: ExpenseRow;
-        Insert: Omit<ExpenseRow, ServerManaged | "version"> & {
+        Insert: Omit<
+          ExpenseRow,
+          ServerManaged | "version" | "settlement_asset" | "category" | "tags"
+        > & {
           id?: string;
           created_at?: string;
           currency?: string;
           settled?: boolean;
           version?: number;
+          settlement_asset?: string | null;
+          category?: string | null;
+          tags?: string[];
         };
-        // `created_by_wallet` and the amount/rate fields are absent by design:
-        // the database freezes them on update.
-        Update: Partial<Omit<ExpenseRow, ServerManaged | "created_by_wallet" | "total_amount" | "currency" | "exchange_rate" | "exchange_rate_timestamp">>;
+        // `created_by_wallet` and the amount/rate/asset fields are absent by
+        // design: the database freezes them on update.
+        Update: Partial<Omit<ExpenseRow, ServerManaged | "created_by_wallet" | "total_amount" | "currency" | "exchange_rate" | "exchange_rate_timestamp" | "settlement_asset">>;
         Relationships: [];
       };
       trips: {
@@ -345,6 +377,24 @@ export type Database = {
           created_at?: string;
         };
         Update: Partial<Omit<SponsorshipInviteRow, "id" | "created_at">>;
+        Relationships: [];
+      };
+      expense_receipts: {
+        Row: ExpenseReceiptRow;
+        Insert: Omit<
+          ExpenseReceiptRow,
+          "id" | "created_at" | "status" | "scan_result" | "removed_at" | "removed_by_wallet" | "removal_reason"
+        > & {
+          id?: string;
+          created_at?: string;
+          status?: ExpenseReceiptRow["status"];
+          scan_result?: Json;
+        };
+        // Only the lifecycle fields change after upload; the bytes, checksum
+        // and uploader are fixed for the life of the row.
+        Update: Partial<
+          Pick<ExpenseReceiptRow, "status" | "file_name" | "caption" | "removed_at" | "removed_by_wallet" | "removal_reason">
+        >;
         Relationships: [];
       };
       schema_migrations: {

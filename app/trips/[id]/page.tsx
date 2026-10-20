@@ -172,6 +172,7 @@ export default function TripDetailPage() {
               <TripExpensesPanel
                 expenses={tripExpenses}
                 tripId={trip.id}
+                members={trip.members}
                 currentUserPublicKey={publicKey}
                 onAddExpense={canAddExpenses ? () => openExpenseForm(null) : undefined}
               />

@@ -214,6 +214,9 @@ export function rowToExpense(row: ExpenseRow): Expense {
     currency: row.currency,
     exchangeRate: row.exchange_rate ?? undefined,
     exchangeRateTimestamp: row.exchange_rate_timestamp ?? undefined,
+    settlementAsset: row.settlement_asset ?? null,
+    category: isExpenseCategory(row.category) ? row.category : null,
+    tags: row.tags ?? [],
     splitMode: row.split_mode,
     paidByMemberId: row.paid_by_member_id,
     members: (row.members ?? []) as unknown as Member[],
@@ -327,6 +330,9 @@ export function expenseToInsert(expense: Expense, creatorWallet: string): Expens
     currency: expense.currency ?? "XLM",
     exchange_rate: expense.exchangeRate ?? null,
     exchange_rate_timestamp: expense.exchangeRateTimestamp ?? null,
+    settlement_asset: expense.settlementAsset ?? null,
+    category: expense.category ?? null,
+    tags: normalizeTags(expense.tags),
     split_mode: expense.splitMode,
     paid_by_member_id: expense.paidByMemberId,
     members: expense.members as unknown as ExpenseInsert["members"],
@@ -353,6 +359,10 @@ export function expenseToUpdate(updates: Partial<Expense>): ExpenseUpdate {
   // totalAmount, currency, exchangeRate, and exchangeRateTimestamp are omitted here
   // because the database freeze_row_identity trigger intercepts them and preserves
   // the snapshot taken at creation.
+  // Category and tags are organization only — no amount depends on them — so
+  // any member may relabel a shared expense.
+  if (updates.category !== undefined) patch.category = updates.category ?? null;
+  if (updates.tags !== undefined) patch.tags = normalizeTags(updates.tags);
   if (updates.splitMode !== undefined) patch.split_mode = updates.splitMode;
   if (updates.paidByMemberId !== undefined) patch.paid_by_member_id = updates.paidByMemberId;
   if (updates.members !== undefined) {
@@ -409,7 +419,7 @@ export function tripToUpdate(updates: Partial<Trip>): TripUpdate {
 
 const USER_COLUMNS = "id, wallet_address, display_name, created_at, updated_at, last_login_at";
 const EXPENSE_COLUMNS =
-  "id, title, description, total_amount, currency, exchange_rate, exchange_rate_timestamp, split_mode, paid_by_member_id, members, shares, settled, created_by_wallet, member_wallets, created_at, updated_at";
+  "id, title, description, total_amount, currency, exchange_rate, exchange_rate_timestamp, settlement_asset, category, tags, split_mode, paid_by_member_id, members, shares, settled, created_by_wallet, member_wallets, created_at, updated_at";
 const TRIP_COLUMNS =
   "id, name, description, members, expense_ids, settled, created_by_wallet, member_wallets, starts_on, ends_on, recurring_rules, permissions, source_template_id, copied_from_trip_id, created_at, updated_at";
 const TRIP_TEMPLATE_COLUMNS =
@@ -597,6 +607,78 @@ export async function fetchExpensesPaginated(
   };
 }
 
+/** PGRST202 — the RPC is not in the PostgREST schema cache (migration not applied). */
+const PG_FUNCTION_MISSING = "PGRST202";
+
+export interface ExpenseHistoryQuery {
+  filters: ExpenseHistoryFilters;
+  /** Restrict to one trip's expenses. RLS still decides which of them are visible. */
+  tripId?: string | null;
+  cursor?: HistoryCursor | null;
+  limit?: number;
+  /** Viewer's `Date#getTimezoneOffset()`, so date filters mean their local days. */
+  tzOffsetMinutes?: number;
+}
+
+/**
+ * One page of filtered, searched expense history, newest first.
+ *
+ * All filtering runs in Postgres (`public.search_expenses`, SECURITY INVOKER so
+ * the caller's RLS applies) with keyset pagination on (created_at, id). That is
+ * what keeps a trip with thousands of expenses usable: the browser receives one
+ * page, never the whole trip, and paging stays stable while rows are inserted.
+ */
+export async function searchExpenseHistory(
+  query: ExpenseHistoryQuery,
+  client: StellarStarClient = requireAuthenticatedClient()
+): Promise<PaginatedResponse<Expense>> {
+  const { limit } = parsePaginationParams({ limit: query.limit ?? null });
+  const { filters } = query;
+  const terms = searchTerms(filters.q);
+  const { fromIso, toIso } = dateRangeBounds(filters.from, filters.to, query.tzOffsetMinutes ?? 0);
+
+  const { data, error } = await client.rpc("search_expenses", {
+    p_trip_id: query.tripId ?? null,
+    p_terms: terms.length > 0 ? terms : null,
+    p_category: filters.category,
+    p_tags: filters.tags.length > 0 ? filters.tags : null,
+    p_payer: filters.payer,
+    p_status: filters.status === "all" ? null : filters.status,
+    p_asset: filters.asset,
+    p_from: fromIso,
+    p_to: toIso,
+    p_cursor_created_at: query.cursor?.createdAt ?? null,
+    p_cursor_id: query.cursor?.id ?? null,
+    // One extra row reveals whether another page exists without a count(*).
+    p_limit: limit + 1,
+  });
+
+  if (error) {
+    if (error.code === PG_FUNCTION_MISSING) {
+      throw new DatabaseError(
+        "Expense search is not set up yet. Apply migrations/0008_expense_categories_tags_search.sql (npm run db:migrate).",
+        error.code,
+        error
+      );
+    }
+    throw toDatabaseError(error, "search expenses");
+  }
+
+  const rows = ((data ?? []) as ExpenseRow[]).map(rowToExpense);
+  const hasMore = rows.length > limit;
+  const items = hasMore ? rows.slice(0, limit) : rows;
+  const last = items[items.length - 1];
+
+  return {
+    data: items,
+    pagination: {
+      limit,
+      nextCursor: hasMore && last ? encodeHistoryCursor(last.createdAt, last.id) : null,
+      hasMore,
+    },
+  };
+}
+
 export async function fetchExpenseById(
   id: string,
   client: StellarStarClient = requireAuthenticatedClient()
@@ -640,20 +722,26 @@ export async function updateExpenseRow(
 
   // If a baseExpense with version is provided, try optimistic concurrency control
   if (baseExpense && baseExpense.version !== undefined) {
+    // `update_expense_versioned` predates categories and tags and would accept
+    // the call while silently dropping them, so relabels go straight to the
+    // version-filtered UPDATE below, which applies the whole patch.
+    const rpcCoversPatch = patch.category === undefined && patch.tags === undefined;
     try {
-      const { data: rpcData, error: rpcError } = await client.rpc("update_expense_versioned", {
-        p_id: id,
-        p_expected_version: baseExpense.version,
-        p_title: updates.title ?? null,
-        p_description: updates.description !== undefined ? updates.description : null,
-        p_total_amount: updates.totalAmount ?? null,
-        p_currency: updates.currency ?? null,
-        p_split_mode: updates.splitMode ?? null,
-        p_paid_by_member_id: updates.paidByMemberId ?? null,
-        p_members: updates.members ? (updates.members as unknown as Json) : null,
-        p_shares: updates.shares ? (updates.shares as unknown as Json) : null,
-        p_settled: updates.settled !== undefined ? updates.settled : null,
-      });
+      const { data: rpcData, error: rpcError } = rpcCoversPatch
+        ? await client.rpc("update_expense_versioned", {
+            p_id: id,
+            p_expected_version: baseExpense.version,
+            p_title: updates.title ?? null,
+            p_description: updates.description !== undefined ? updates.description : null,
+            p_total_amount: updates.totalAmount ?? null,
+            p_currency: updates.currency ?? null,
+            p_split_mode: updates.splitMode ?? null,
+            p_paid_by_member_id: updates.paidByMemberId ?? null,
+            p_members: updates.members ? (updates.members as unknown as Json) : null,
+            p_shares: updates.shares ? (updates.shares as unknown as Json) : null,
+            p_settled: updates.settled !== undefined ? updates.settled : null,
+          })
+        : { data: null, error: null };
 
       // `update_expense_versioned` is declared RETURNS SETOF public.expenses, so
       // supabase-js hands back an array. Treating it as a single row produced an
