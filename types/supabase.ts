@@ -92,6 +92,30 @@ export type ExportAuditEventRow = {
   created_at: string;
 };
 
+export type SettlementProposalRow = {
+  id: string;
+  trip_id: string;
+  creator_wallet: string;
+  content_hash: string;
+  snapshot: Json;
+  status: "open" | "revoked" | "superseded" | "invalidated";
+  expires_at: string;
+  revoked_reason: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SettlementProposalResponseRow = {
+  id: string;
+  proposal_id: string;
+  member_id: string;
+  wallet: string;
+  decision: "approve" | "reject" | "request_edit";
+  reason: string | null;
+  content_hash: string;
+  created_at: string;
+};
+
 export type AuthChallengeRow = {
   nonce: string;
   address: string;
@@ -412,6 +436,21 @@ export type Database = {
         Row: ContactWalletChangeRow;
         // Written only by the SECURITY DEFINER functions.
         Insert: Record<string, never>;
+        Update: Record<string, never>;
+        Relationships: [];
+      };
+      settlement_proposals: {
+        Row: SettlementProposalRow;
+        Insert: Pick<SettlementProposalRow, "trip_id" | "creator_wallet" | "content_hash" | "snapshot" | "expires_at"> &
+          Partial<Pick<SettlementProposalRow, "status">>;
+        // The snapshot is frozen by a trigger; only the lifecycle moves.
+        Update: Partial<Pick<SettlementProposalRow, "status" | "revoked_reason">>;
+        Relationships: [];
+      };
+      settlement_proposal_responses: {
+        Row: SettlementProposalResponseRow;
+        Insert: Omit<SettlementProposalResponseRow, "id" | "created_at">;
+        // Append-only.
         Update: Record<string, never>;
         Relationships: [];
       };

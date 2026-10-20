@@ -79,6 +79,8 @@ interface PayNetParams {
   asset: string;
   payerWalletAddress: string;
   tripName: string;
+  /** Overrides the memo, e.g. a settlement proposal's `SSP:<ref>` (#328). */
+  memoText?: string;
 }
 
 export interface PayNetPathParams {
@@ -86,6 +88,8 @@ export interface PayNetPathParams {
   tripName: string;
   payerWalletAddress: string;
   path: PricedPath;
+  /** Overrides the memo, e.g. a settlement proposal's `SSP:<ref>` (#328). */
+  memoText?: string;
 }
 
 export function useNetPayment({ tripId }: UseNetPaymentOpts) {
@@ -322,7 +326,7 @@ export function useNetPayment({ tripId }: UseNetPaymentOpts) {
   }, [pendingNetSettlement, toastError, toastSuccess, loadPoolBalance, clearPersistedPending]);
 
   const payNetSettlement = useCallback(
-    async ({ debts, totalAmount, asset, payerWalletAddress, tripName }: PayNetParams) => {
+    async ({ debts, totalAmount, asset, payerWalletAddress, tripName, memoText: memoOverride }: PayNetParams) => {
       const requestId = createRequestId();
 
       if (!publicKey) {
@@ -436,7 +440,7 @@ export function useNetPayment({ tripId }: UseNetPaymentOpts) {
         }
 
         setPaymentState({ status: "building" });
-        const memoText = tripName;
+        const memoText = memoOverride ?? tripName;
         const { xdr } = await buildPaymentTransaction({
           sourcePublicKey:      publicKey,
           destinationPublicKey: payerWalletAddress,
@@ -624,7 +628,7 @@ export function useNetPayment({ tripId }: UseNetPaymentOpts) {
   );
 
   const payNetPathSettlement = useCallback(
-    async ({ debts, tripName, payerWalletAddress, path }: PayNetPathParams) => {
+    async ({ debts, tripName, payerWalletAddress, path, memoText: memoOverride }: PayNetPathParams) => {
       const requestId = createRequestId();
 
       if (!publicKey) {
@@ -709,7 +713,7 @@ export function useNetPayment({ tripId }: UseNetPaymentOpts) {
 
       try {
         setPaymentState({ status: "building" });
-        const memoText = tripName;
+        const memoText = memoOverride ?? tripName;
         const { xdr } = await buildPathPaymentTransaction({
           sourcePublicKey: publicKey,
           destinationPublicKey: payerWalletAddress,
