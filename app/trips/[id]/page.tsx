@@ -16,6 +16,7 @@ import { TripNotFound } from "@/components/trips/TripNotFound";
 import { TripPaymentProgressBanner } from "@/components/trips/TripPaymentProgressBanner";
 import { TripTabs, type TripTab } from "@/components/trips/TripTabs";
 import { InviteMemberModal } from "@/components/trips/InviteMemberModal";
+import { RecurringPanel } from "@/components/recurring/RecurringPanel";
 import { useAuth } from "@/context/AuthContext";
 import { useContractEvents } from "@/hooks/useContractEvents";
 import { useExpense } from "@/hooks/useExpense";
@@ -152,6 +153,16 @@ export default function TripDetailPage() {
                 currentUserPublicKey={publicKey}
                 onAddExpense={() => setShowExpenseForm(true)}
               />
+            ) : activeTab === "recurring" ? (
+              <motion.div key="recurring" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.15 }}>
+                <RecurringPanel
+                  tripId={trip.id}
+                  members={trip.members}
+                  currentUserPublicKey={publicKey}
+                  currentUserName={user?.displayName}
+                  onExpenseCreated={(expenseId) => linkExpenseToTrip(trip.id, expenseId)}
+                />
+              </motion.div>
             ) : (
               <motion.div
                 key="settle"
