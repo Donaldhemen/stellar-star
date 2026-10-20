@@ -6,6 +6,8 @@ import type { Member } from "@/types/expense";
 import type { Contact } from "@/types/contact";
 import type { TripFormData } from "@/types/trip";
 import { Input } from "@/components/ui/Input";
+import { TripPermissionsFields } from "@/components/trips/TripPermissionsFields";
+import { TripRecurringRulesEditor } from "@/components/trips/TripRecurringRulesEditor";
 import { findDuplicateWalletErrors, isValidStellarAddress } from "@/lib/split/calculator";
 import { canonicalWallet, contactToMember, walletTrust } from "@/lib/contacts/contacts";
 import { cn } from "@/lib/utils";
@@ -40,6 +42,14 @@ export function TripForm({
 }: TripFormProps) {
   const [name, setName] = useState(initialData?.name ?? "");
   const [description, setDescription] = useState(initialData?.description ?? "");
+  const [startsOn, setStartsOn] = useState(initialData?.startsOn ?? "");
+  const [endsOn, setEndsOn] = useState(initialData?.endsOn ?? "");
+  const [recurringRules, setRecurringRules] = useState<RecurringExpenseRule[]>(
+    initialData?.recurringRules ?? []
+  );
+  const [permissions, setPermissions] = useState<TripPermissions>(() =>
+    normalizePermissions(initialData?.permissions)
+  );
   const [members, setMembers] = useState<Member[]>(() => {
     if (initialData?.members && initialData.members.length >= 2) {
       return initialData.members;
@@ -111,6 +121,21 @@ export function TripForm({
       errs[`member_addr_${i}`] = message;
     });
 
+    // Dates and recurring rules share their rules with the copy RPC, so take
+    // those checks from the same validator rather than restating them here.
+    const draftErrors = validateTripDraft({
+      name,
+      description,
+      members,
+      startsOn,
+      endsOn,
+      recurringRules,
+      permissions,
+    });
+    Object.entries(draftErrors).forEach(([key, message]) => {
+      if (key.startsWith("rule_") || key === "startsOn" || key === "endsOn") errs[key] = message;
+    });
+
     setErrors(errs);
     return Object.keys(errs).length === 0;
   };
@@ -129,8 +154,17 @@ export function TripForm({
           name: m.name.trim(),
           walletAddress: m.walletAddress?.trim() ? m.walletAddress.trim().toUpperCase() : undefined,
         })),
+      startsOn: startsOn || undefined,
+      endsOn: endsOn || undefined,
+      recurringRules: normalizeRecurringRules(recurringRules),
+      permissions,
     });
   };
+
+  const hasAdvancedValues =
+    Boolean(initialData?.startsOn || initialData?.endsOn) ||
+    (initialData?.recurringRules?.length ?? 0) > 0 ||
+    initialData?.permissions !== undefined;
 
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
@@ -247,6 +281,43 @@ export function TripForm({
         </button>
       </div>
 
+      {/* Dates, recurring expenses & permissions. A <details> rather than a
+          toggle button keeps the member-row button order stable. */}
+      <details
+        open={hasAdvancedValues}
+        className="rounded-xl border border-[#EFEFEF] bg-[#FAFAFA] px-4 py-3 [&_summary]:cursor-pointer"
+      >
+        <summary className="text-sm font-semibold text-[#0F0F14]">
+          Dates, recurring expenses &amp; permissions
+        </summary>
+        <div className="mt-4 space-y-5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Input
+              label="Starts on"
+              type="date"
+              value={startsOn}
+              onChange={(e) => setStartsOn(e.target.value)}
+              error={errors.startsOn}
+            />
+            <Input
+              label="Ends on"
+              type="date"
+              value={endsOn}
+              min={startsOn || undefined}
+              onChange={(e) => setEndsOn(e.target.value)}
+              error={errors.endsOn}
+            />
+          </div>
+          <TripRecurringRulesEditor
+            rules={recurringRules}
+            members={members}
+            errors={errors}
+            onChange={setRecurringRules}
+          />
+          <TripPermissionsFields value={permissions} onChange={setPermissions} />
+        </div>
+      </details>
+
       {/* Actions */}
       <div className="flex gap-3 pt-2">
         <button
@@ -258,9 +329,10 @@ export function TripForm({
         </button>
         <button
           type="submit"
-          className="flex-1 py-2.5 rounded-xl bg-[#0F0F14] text-[#2DD4BF] text-sm font-bold hover:bg-[#1A1A22] transition-all"
+          disabled={submitting}
+          className="flex-1 py-2.5 rounded-xl bg-[#0F0F14] text-[#2DD4BF] text-sm font-bold hover:bg-[#1A1A22] transition-all disabled:opacity-60"
         >
-          Create Trip
+          {submitting ? "Creating…" : submitLabel}
         </button>
       </div>
     </form>
