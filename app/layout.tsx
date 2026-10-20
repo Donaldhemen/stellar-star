@@ -96,8 +96,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className="scroll-smooth">
-      <body className={`${poppins.className} bg-[#F6F6F6] text-[#0F0F14] font-sans antialiased`}>
+    <html lang="en" className="scroll-smooth" suppressHydrationWarning>
+      <body
+        className={`${poppins.className} bg-[#F6F6F6] text-[#0F0F14] font-sans antialiased`}
+        suppressHydrationWarning
+      >
         <LocaleProvider>
           <AnalyticsProvider>
             <ToastProvider>
