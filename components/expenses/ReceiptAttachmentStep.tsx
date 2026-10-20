@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { uploadExpenseReceipt, ReceiptRequestError } from "@/lib/receipts/client";
+import { attachReceiptOriginal } from "@/lib/receipts/ocr/attachOriginal";
 
 export function ReceiptAttachmentStep({ expenseId, file, onDone }: {
   expenseId: string; file: File; onDone: () => void;
@@ -18,13 +18,11 @@ export function ReceiptAttachmentStep({ expenseId, file, onDone }: {
     setBusy(true); setError("");
     try {
       // Do not compress or re-encode: attach the exact user-selected original.
-      const receipt = await uploadExpenseReceipt(expenseId, file, file.name, "");
+      const receipt = await attachReceiptOriginal(expenseId, file);
       setQuarantined(receipt.status === "quarantined");
       setStored(true);
-    } catch (err) {
-      // A lost successful response can be retried safely: same expense + checksum.
-      if (err instanceof ReceiptRequestError && err.status === 409) setStored(true);
-      else setError("The expense was created, but its original receipt was not attached. Keep this screen open and retry. No new expense will be created.");
+    } catch {
+      setError("The expense was created, but its original receipt was not attached. Keep this screen open and retry. No new expense will be created.");
     } finally {
       inFlight.current = false;
       setBusy(false);
