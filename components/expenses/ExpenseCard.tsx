@@ -2,10 +2,11 @@
 
 import { useCallback, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { ChevronRight, ReceiptText, Trash2 } from "lucide-react";
+import { ChevronRight, ReceiptText, Trash2, Pencil } from "lucide-react";
 import { PaymentStatus } from "@/components/payment/PaymentStatus";
 import { SplitCalculator } from "@/components/expenses/SplitCalculator";
 import { ExpenseReceipts } from "@/components/expenses/ExpenseReceipts";
+import { EditExpenseModal } from "@/components/expenses/EditExpenseModal";
 import { usePayment } from "@/hooks/usePayment";
 import { categoryLabel } from "@/lib/expense/categories";
 import type { Expense, SplitShare } from "@/types/expense";
@@ -28,7 +29,7 @@ export function ExpenseCard({ expense, currentUserPublicKey, onDelete, tripId }:
   const [expanded, setExpanded] = useState(false);
   const [payingShareId, setPayingShareId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [walletReady, setWalletReady] = useState<{ key: string; ready: boolean } | null>(null);
+  const [showEditModal, setShowEditModal] = useState(false);
   const {
     payShare,
     paymentState,
@@ -223,10 +224,19 @@ export function ExpenseCard({ expense, currentUserPublicKey, onDelete, tripId }:
                 expense={expense}
                 confirmDelete={confirmDelete}
                 canDelete={!!onDelete && isOwner}
+                canEdit={!expense.settled && (isOwner || !currentUserPublicKey || expense.members.some(m => m.walletAddress === currentUserPublicKey))}
                 showDeleteHint={!!onDelete}
                 onCancelDelete={() => setConfirmDelete(false)}
                 onConfirmDelete={() => onDelete?.(expense.id)}
                 onRequestDelete={() => setConfirmDelete(true)}
+                onEdit={() => setShowEditModal(true)}
+              />
+
+              <EditExpenseModal
+                open={showEditModal}
+                onClose={() => setShowEditModal(false)}
+                expense={expense}
+                currentUserPublicKey={currentUserPublicKey}
               />
             </div>
           </motion.div>
@@ -240,20 +250,24 @@ interface ExpenseCardFooterProps {
   expense: Expense;
   confirmDelete: boolean;
   canDelete: boolean;
+  canEdit: boolean;
   showDeleteHint: boolean;
   onCancelDelete: () => void;
   onConfirmDelete: () => void;
   onRequestDelete: () => void;
+  onEdit: () => void;
 }
 
 function ExpenseCardFooter({
   expense,
   confirmDelete,
   canDelete,
+  canEdit,
   showDeleteHint,
   onCancelDelete,
   onConfirmDelete,
   onRequestDelete,
+  onEdit,
 }: ExpenseCardFooterProps) {
   const { t } = useLocale();
 
@@ -296,20 +310,36 @@ function ExpenseCardFooter({
         <span className="text-[10px] uppercase tracking-wider font-semibold text-[#CCC] break-words">
           {t("expenses.splitLabel", { mode: expense.splitMode })}
         </span>
-        {canDelete ? (
-          <button
-            onClick={(event) => {
-              event.stopPropagation();
-              onRequestDelete();
-            }}
-            className="flex items-center gap-1.5 text-xs font-medium text-[#CCC] hover:text-red-500 transition-colors"
-          >
-            <Trash2 size={12} />
-            {t("common.delete")}
-          </button>
-        ) : showDeleteHint ? (
-          <span className="text-[10px] text-[#CCC] italic">{t("expenses.onlyPayerCanDelete")}</span>
-        ) : null}
+        <div className="flex items-center gap-3">
+          {canEdit && (
+            <button
+              onClick={(event) => {
+                event.stopPropagation();
+                onEdit();
+              }}
+              className="flex items-center gap-1 text-xs font-medium text-[#888] hover:text-[#0F0F14] transition-colors"
+              title="Edit Expense"
+            >
+              <Pencil size={12} />
+              Edit
+            </button>
+          )}
+
+          {canDelete ? (
+            <button
+              onClick={(event) => {
+                event.stopPropagation();
+                onRequestDelete();
+              }}
+              className="flex items-center gap-1.5 text-xs font-medium text-[#CCC] hover:text-red-500 transition-colors"
+            >
+              <Trash2 size={12} />
+              {t("common.delete")}
+            </button>
+          ) : showDeleteHint ? (
+            <span className="text-[10px] text-[#CCC] italic">{t("expenses.onlyPayerCanDelete")}</span>
+          ) : null}
+        </div>
       </div>
     </div>
   );
