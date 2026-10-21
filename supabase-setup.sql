@@ -1810,6 +1810,48 @@ CREATE POLICY export_audit_events_insert_actor ON public.export_audit_events
 
 GRANT SELECT, INSERT ON public.export_audit_events TO authenticated;
 
+-- ─── 14. IDEMPOTENCY RECORDS (#312) ──────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS public.idempotency_records (
+  key                 TEXT NOT NULL,
+  wallet_address      TEXT NOT NULL,
+  endpoint            TEXT NOT NULL,
+  request_fingerprint TEXT NOT NULL,
+  status              TEXT NOT NULL CHECK (status IN ('pending', 'completed', 'failed')),
+  response_status     INT,
+  response_body       JSONB,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  locked_until        TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '1 minute'),
+  CONSTRAINT idempotency_records_wallet_key_unique UNIQUE (wallet_address, key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_idempotency_records_lookup
+  ON public.idempotency_records (wallet_address, key);
+
+CREATE INDEX IF NOT EXISTS idx_idempotency_records_created_at
+  ON public.idempotency_records (created_at DESC);
+
+ALTER TABLE public.idempotency_records ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS idempotency_records_select_self ON public.idempotency_records;
+CREATE POLICY idempotency_records_select_self ON public.idempotency_records
+  FOR SELECT USING (wallet_address = public.current_wallet());
+
+DROP POLICY IF EXISTS idempotency_records_insert_self ON public.idempotency_records;
+CREATE POLICY idempotency_records_insert_self ON public.idempotency_records
+  FOR INSERT WITH CHECK (wallet_address = public.current_wallet());
+
+DROP POLICY IF EXISTS idempotency_records_update_self ON public.idempotency_records;
+CREATE POLICY idempotency_records_update_self ON public.idempotency_records
+  FOR UPDATE USING (wallet_address = public.current_wallet())
+             WITH CHECK (wallet_address = public.current_wallet());
+
+DROP POLICY IF EXISTS idempotency_records_delete_self ON public.idempotency_records;
+CREATE POLICY idempotency_records_delete_self ON public.idempotency_records
+  FOR DELETE USING (wallet_address = public.current_wallet());
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.idempotency_records TO authenticated;
+
 -- ─── RECORD APPLIED MIGRATIONS ───────────────────────────────────────────────
 
 INSERT INTO public.schema_migrations (version, name, checksum)
@@ -1821,5 +1863,6 @@ VALUES
   ('0005', '0005_verify_trip_invite_rpc', 'verify_trip_invite_v1'),
   ('0006', '0006_settlement_request_ids', 'settlement_request_ids_v1'),
   ('0007', '0007_composite_query_indexes', 'composite_query_indexes_v1'),
-  ('0011', '0011_export_audit_events', 'export_audit_events_v1')
+  ('0011', '0011_export_audit_events', 'export_audit_events_v1'),
+  ('0014', '0014_idempotency_records', 'idempotency_records_312_v1')
 ON CONFLICT (version) DO NOTHING;
