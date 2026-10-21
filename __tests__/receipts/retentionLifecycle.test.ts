@@ -7,9 +7,9 @@ test("stores unchanged original bytes with checksum, uploader and the existing r
   const inspected = inspectReceiptUpload({ bytes, declaredType: "image/jpeg", fileName: "original.jpg", caption: "", maxBytes: 1024 });
   const now = new Date("2026-10-20T12:00:00Z");
   let saved: Record<string, unknown> = {};
-  const insert = { insert: jest.fn((row) => { saved = row; return insert; }), select: jest.fn(() => insert),
+  const insert: { insert: jest.Mock; select: jest.Mock; single: jest.Mock } = { insert: jest.fn((row) => { saved = row; return insert; }), select: jest.fn(() => insert),
     single: jest.fn(async () => ({ data: saved, error: null })) };
-  const count = { select: jest.fn(() => count), eq: jest.fn(() => count), neq: jest.fn(async () => ({ count: 0, error: null })) };
+  const count: { select: jest.Mock; eq: jest.Mock; neq: jest.Mock } = { select: jest.fn(() => count), eq: jest.fn(() => count), neq: jest.fn(async () => ({ count: 0, error: null })) };
   const upload = jest.fn(async () => ({ error: null }));
   const storage = { upload, remove: jest.fn() };
   const client = { from: jest.fn().mockReturnValueOnce(count).mockReturnValueOnce(insert), storage: { from: jest.fn(() => storage) } };
@@ -27,7 +27,7 @@ test("purges expired and orphaned originals, drops private display data, and ret
     { id: "orphan", storage_path: "receipts/orphan.jpg", expense_id: null },
     { id: "retry", storage_path: "receipts/retry.jpg", expense_id: "expense" },
   ];
-  const query = { select: jest.fn(() => query), neq: jest.fn(() => query), or: jest.fn(() => query), limit: jest.fn(async () => ({ data: due, error: null })) };
+  const query: { select: jest.Mock; neq: jest.Mock; or: jest.Mock; limit: jest.Mock } = { select: jest.fn(() => query), neq: jest.fn(() => query), or: jest.fn(() => query), limit: jest.fn(async () => ({ data: due, error: null })) };
   const updates: Array<{ patch: Record<string, unknown>; id: string }> = [];
   const remove = jest.fn(async ([path]: string[]) => ({ error: path.endsWith("retry.jpg") ? new Error("storage unavailable") : null }));
   const client = { storage: { from: () => ({ remove }) }, from: jest.fn().mockReturnValueOnce(query).mockImplementation(() => ({

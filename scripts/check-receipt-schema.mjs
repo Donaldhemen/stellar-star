@@ -58,16 +58,20 @@ try {
     .replace(/CREATE EXTENSION IF NOT EXISTS pgcrypto;/g, "");
   const receiptSection = setup.indexOf("CREATE TABLE IF NOT EXISTS public.expense_receipts");
   assert.ok(receiptSection > 0);
-  await provisioned.exec(setup.slice(0, receiptSection));
+  await provisioned.exec(setup);
   // A colliding historical marker must not cause the new receipt schema to skip.
   await provisioned.exec("INSERT INTO schema_migrations (version, name, checksum) VALUES ('0009', 'legacy_parallel_branch', 'legacy') ON CONFLICT DO NOTHING");
-  const upgrade = await readFile(new URL("../migrations/0012_receipt_capture_prerequisites.sql", import.meta.url), "utf8");
+  const upgrade = await readFile(new URL("../migrations/0017_receipt_capture_prerequisites.sql", import.meta.url), "utf8");
   await provisioned.exec(upgrade);
   await provisioned.exec(upgrade);
   await provisioned.exec(setup);
   assert.equal((await provisioned.query("SELECT public FROM storage.buckets WHERE id = 'expense-receipts'")).rows[0].public, false);
-  assert.equal((await provisioned.query("SELECT version FROM schema_migrations WHERE version = '0012'")).rows.length, 1);
+  assert.equal((await provisioned.query("SELECT version FROM schema_migrations WHERE version = '0017'")).rows.length, 1);
   const columns = (await provisioned.query("SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'expenses'")).rows.map((row) => row.column_name);
   for (const name of ["category", "tags", "entered_amount", "settlement_asset"]) assert.ok(columns.includes(name));
-  console.log("PASS: actual cumulative provisioning and repeatable receipt/form upgrade 0012.");
+  const receiptPolicy = (await provisioned.query("SELECT qual FROM pg_policies WHERE schemaname = 'public' AND tablename = 'expense_receipts' AND policyname = 'expense_receipts_select_members'")).rows[0];
+  assert.ok(receiptPolicy.qual.includes("expense_has_permission"));
+  const linkRpc = (await provisioned.query("SELECT prosrc FROM pg_proc WHERE proname = 'add_expense_to_trip'")).rows[0];
+  assert.ok(linkRpc.prosrc.includes("trip_has_permission"));
+  console.log("PASS: actual cumulative provisioning and repeatable receipt/form upgrade 0017.");
 } finally { await provisioned.close(); }

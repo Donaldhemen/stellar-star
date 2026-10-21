@@ -12,6 +12,7 @@ import { TripRecurringRulesEditor } from "@/components/trips/TripRecurringRulesE
 import { findDuplicateWalletErrors, isValidStellarAddress } from "@/lib/split/calculator";
 import { canonicalWallet, contactToMember, walletTrust } from "@/lib/contacts/contacts";
 import { cn } from "@/lib/utils";
+import { trackAnalyticsEvent } from "@/lib/analytics/sink";
 
 interface TripFormProps {
   submitLabel?: string;
@@ -149,16 +150,24 @@ export function TripForm({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!validate()) return;
+    const cleanMembers = members
+      .filter((m) => m.name.trim())
+      .map((m) => ({
+        ...m,
+        name: m.name.trim(),
+        walletAddress: m.walletAddress?.trim() ? m.walletAddress.trim().toUpperCase() : undefined,
+      }));
+
+    trackAnalyticsEvent("trip_created", {
+      member_count: cleanMembers.length,
+      has_dates: Boolean(startsOn || endsOn),
+      has_recurring_rules: recurringRules.length > 0,
+    });
+
     onSubmit({
       name: name.trim(),
       description: description.trim(),
-      members: members
-        .filter((m) => m.name.trim())
-        .map((m) => ({
-          ...m,
-          name: m.name.trim(),
-          walletAddress: m.walletAddress?.trim() ? m.walletAddress.trim().toUpperCase() : undefined,
-        })),
+      members: cleanMembers,
       startsOn: startsOn || undefined,
       endsOn: endsOn || undefined,
       recurringRules: normalizeRecurringRules(recurringRules),

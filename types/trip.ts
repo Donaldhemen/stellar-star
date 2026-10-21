@@ -1,8 +1,10 @@
 import type { Expense, Member, SplitMode } from "./expense";
+import type { TravelWorkspace } from "./workspace";
+export type { TripPermission, TripRole } from "./expense";
 
 /**
- * What non-creator members are allowed to do inside a trip. The creator can
- * always do everything; these only widen or narrow what everyone else sees.
+ * Legacy trip-form switches retained for existing trips/templates. New access
+ * checks use member roles and granular permissions instead.
  */
 export interface TripPermissions {
   membersCanAddExpenses: boolean;
@@ -47,6 +49,8 @@ export interface Trip {
   sourceTemplateId?: string;
   /** Provenance: the past trip this trip was duplicated from, if any. */
   copiedFromTripId?: string;
+  /** Lightweight travel workspace: itinerary, checklists, booking references */
+  workspace?: TravelWorkspace;
 }
 
 export type TripFormData = {

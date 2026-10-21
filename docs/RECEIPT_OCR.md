@@ -86,7 +86,7 @@ a durable offline queue or background upload.
    A custom CSP must permit same-origin workers/scripts and WebAssembly. Do not
    redirect these requests to a third-party CDN.
 3. For a fresh database, use the cumulative `supabase-setup.sql`. For an existing
-   database, apply `0012_receipt_capture_prerequisites.sql`; it replays the
+   database, apply `0017_receipt_capture_prerequisites.sql`; it replays the
    required receipt/form schema under a unique version despite historical
    parallel-branch migration number collisions. It is idempotent and restores
    the complete FX provenance freeze last. Do not renumber applied history.
@@ -114,7 +114,7 @@ a durable offline queue or background upload.
 - Existing receipt/form regressions: `npm test -- --runInBand __tests__/receipts __tests__/components/expenses/ExpenseForm.test.tsx __tests__/hooks/useExpenseFormCurrency.test.tsx`.
 - Real worker/network smoke: install Chromium with `npx playwright install chromium`, then `npm run test:ocr:browser`. It recognizes a synthetic receipt and blocks/reports requests outside the local origin.
 - Full browser flow: `npx playwright install chromium webkit`, then `npm run test:ocr:e2e`. The wallet/backend fixtures are test-only; the OCR engine and app form are real.
-- PostgreSQL verification: `npm run test:receipts:database`. Runs actual PostgreSQL in memory with PGlite, including membership RLS, write denial, a colliding legacy marker, the cumulative setup and repeat application of upgrade 0012. Supabase's pgcrypto extension is replaced only in the test harness by PGlite's built-in `gen_random_uuid()`.
+- PostgreSQL verification: `npm run test:receipts:database`. Runs actual PostgreSQL in memory with PGlite, including membership RLS, write denial, a colliding legacy marker, the cumulative setup and repeat application of upgrade 0017. Supabase's pgcrypto extension is replaced only in the test harness by PGlite's built-in `gen_random_uuid()`.
 - Full gates: `npm run lint`, `npx tsc --noEmit`, `npm run build`, `npm test -- --runInBand`.
 
 Repository-wide gates and final issue-specific results are recorded in
