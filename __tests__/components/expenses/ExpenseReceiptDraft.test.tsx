@@ -4,6 +4,8 @@ import { ExpenseForm } from "@/components/expenses/ExpenseForm";
 import { parseReceiptText } from "@/lib/receipts/ocr/parser";
 import { attachReceiptOriginal } from "@/lib/receipts/ocr/attachOriginal";
 import type { ExpenseReceipt } from "@/types/receipt";
+import { checkReceiptStorage } from "@/lib/receipts/client";
+jest.mock("@/lib/receipts/client", () => ({ ...jest.requireActual("@/lib/receipts/client"), checkReceiptStorage: jest.fn().mockResolvedValue(undefined) }));
 
 const addExpense = jest.fn().mockResolvedValue(undefined);
 const original = new File(["unchanged original"], "receipt.jpg");
@@ -43,8 +45,18 @@ test("blocks submit during review and creates once before attaching the original
   fireEvent.click(screen.getByRole("button", { name: "Continue" }));
   await waitFor(() => expect(done).toHaveBeenCalledWith(addExpense.mock.calls[0][0].id));
 });
-test("keeps the OCR entry point disabled unless launch is explicitly enabled", () => {
+test("supports explicitly disabling the local OCR entry point", () => {
   process.env.NEXT_PUBLIC_RECEIPT_OCR_ENABLED = "false";
   render(<ExpenseForm defaultMembers={members} />);
   expect(screen.queryByRole("button", { name: "Capture or select a receipt" })).toBeNull();
+});
+test("keeps the reviewed draft and creates nothing when private storage is unavailable", async () => {
+  jest.mocked(checkReceiptStorage).mockRejectedValueOnce(new Error("storage unavailable"));
+  const { container } = render(<ExpenseForm defaultMembers={members} />);
+  fireEvent.click(screen.getByRole("button", { name: "Capture or select a receipt" }));
+  fireEvent.click(screen.getByText("Apply fixture reviewed draft"));
+  fireEvent.submit(container.querySelector("form")!);
+  expect(await screen.findByRole("alert")).toBeTruthy();
+  expect(addExpense).not.toHaveBeenCalled();
+  expect((screen.getByLabelText(/Expense title/) as HTMLInputElement).value).toBe("Cafe");
 });

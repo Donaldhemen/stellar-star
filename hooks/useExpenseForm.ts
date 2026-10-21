@@ -56,7 +56,7 @@ async function lockQuote(currency: string): Promise<LockedQuote | null> {
 
 export interface UseExpenseFormOptions {
   /** Optional review gate for receipt-assisted drafts. */
-  beforeCreate?: () => boolean;
+  beforeCreate?: () => boolean | Promise<boolean>;
   onSuccess?: (expenseId?: string) => void;
   currentUserPublicKey?: string | null;
   currentUserName?: string | null;
@@ -271,12 +271,13 @@ export function useExpenseForm({
   const handleSubmit = useCallback(
     async (event: FormEvent) => {
       event.preventDefault();
-      if (saveInFlight.current || (beforeCreate && !beforeCreate())) return;
+      if (saveInFlight.current) return;
       if (!validate()) return;
 
       saveInFlight.current = true;
       setSubmitting(true);
       try {
+        if (beforeCreate && !(await beforeCreate())) return;
         const cleanMembers = members.map((member) => ({
           ...member,
           name: member.name.trim(),
@@ -328,6 +329,8 @@ export function useExpenseForm({
           exchangeRateTimestamp: provenance.exchangeRateTimestamp,
           exchangeRateSource: provenance.exchangeRateSource,
           settlementAsset: provenance.settlementAsset,
+          category: category || null,
+          tags,
           splitMode,
           paidByMemberId,
           members: cleanMembers,

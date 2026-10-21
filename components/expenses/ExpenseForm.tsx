@@ -6,6 +6,7 @@ import { ReceiptCapture } from "@/components/expenses/ReceiptCapture";
 import { ReceiptAttachmentStep } from "@/components/expenses/ReceiptAttachmentStep";
 import { canUseReceiptDraft, receiptDraftDescription } from "@/lib/receipts/ocr/review";
 import { RECEIPT_CURRENCIES } from "@/lib/receipts/ocr/parser";
+import { checkReceiptStorage, ReceiptRequestError } from "@/lib/receipts/client";
 import { Input } from "@/components/ui/Input";
 import { ExpenseDescriptionField } from "@/components/expenses/ExpenseDescriptionField";
 import { ExpenseFormActions } from "@/components/expenses/ExpenseFormActions";
@@ -38,8 +39,20 @@ export function ExpenseForm({
   const [capturing, setCapturing] = useState(false);
   const [receipt, setReceipt] = useState<File | null>(null);
   const [createdId, setCreatedId] = useState<string | null>(null);
+  const [receiptError, setReceiptError] = useState("");
   const form = useExpenseForm({
-    beforeCreate: () => !capturing && !createdId,
+    beforeCreate: async () => {
+      if (capturing || createdId) return false;
+      setReceiptError("");
+      if (receipt) {
+        try { await checkReceiptStorage(receipt); }
+        catch (error) {
+          setReceiptError(error instanceof ReceiptRequestError ? error.message : "Receipt storage is unavailable. Your expense has not been created. Please try again.");
+          return false;
+        }
+      }
+      return true;
+    },
     onSuccess: (id) => {
       if (receipt && id) setCreatedId(id);
       else onSuccess?.(id);
@@ -55,7 +68,8 @@ export function ExpenseForm({
 
   return (
     <form onSubmit={form.handleSubmit} className="space-y-5">
-      {process.env.NEXT_PUBLIC_RECEIPT_OCR_ENABLED === "true" && <>
+      {process.env.NEXT_PUBLIC_RECEIPT_OCR_ENABLED !== "false" && <>
+        {receiptError && <p role="alert">{receiptError}</p>}
         {capturing ? <ReceiptCapture onCancel={() => setCapturing(false)} onUse={(draft, file) => {
           if (!canUseReceiptDraft(draft)) return;
           form.setTitle(draft.fields.merchant.value.trim());
@@ -63,6 +77,7 @@ export function ExpenseForm({
           form.setCurrency(draft.fields.currency.value);
           form.setDescription(receiptDraftDescription(draft));
           setReceipt(file);
+          setReceiptError("");
           setCapturing(false);
         }} /> : <button type="button" disabled={form.submitting} onClick={() => setCapturing(true)}>
           {receipt ? "Replace receipt draft" : "Capture or select a receipt"}
@@ -108,9 +123,10 @@ export function ExpenseForm({
           error={form.errors.totalAmount}
           trailing={
             <select
+              aria-label="Expense currency"
               value={form.currency}
               onChange={(e) => form.setCurrency(e.target.value)}
-              className="bg-transparent text-xs font-semibold text-[#0F0F14] outline-none cursor-pointer"
+              className="pointer-events-auto bg-transparent text-xs font-semibold text-[#0F0F14] outline-none cursor-pointer"
             >
               {RECEIPT_CURRENCIES.map((currency) => <option key={currency} value={currency}>{currency}</option>)}
             </select>

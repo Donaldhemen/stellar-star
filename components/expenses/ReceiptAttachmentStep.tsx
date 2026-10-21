@@ -33,14 +33,14 @@ export function ReceiptAttachmentStep({ expenseId, file, onDone }: {
     // This step is mounted once for an immutable expense and file.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  return <section aria-label="Receipt attachment status" className="space-y-3">
+  return <section aria-label="Receipt attachment status" className="space-y-3 pb-20 sm:pb-0">
     <p className="font-semibold">Expense created.</p>
     {busy && <p role="status">Saving the original receipt privately…</p>}
     {error && <p role="alert">{error}</p>}
-    {!stored && !busy && <button type="button" onClick={() => void upload()}>Retry receipt attachment</button>}
+    {!stored && !busy && <button type="button" className="min-h-11 w-full rounded-xl bg-[#0F0F14] px-4 py-3 text-sm font-semibold text-white" onClick={() => void upload()}>Retry receipt attachment</button>}
     {stored && <>
       <p role="status">{quarantined ? "Original stored in quarantine for safety review. It cannot be downloaded." : "Original receipt saved under the receipt retention policy."}</p>
-      <button type="button" onClick={onDone}>Continue</button>
+      <button type="button" className="min-h-11 w-full rounded-xl bg-[#0F0F14] px-4 py-3 text-sm font-semibold text-white" onClick={onDone}>Continue</button>
     </>}
   </section>;
 }

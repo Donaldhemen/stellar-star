@@ -9,6 +9,8 @@
   "scripts": {
     "ocr:assets": "node scripts/prepare-ocr-assets.mjs",
     "test:ocr:browser": "npm run ocr:assets && node scripts/smoke-receipt-ocr.mjs",
+    "test:receipts:database": "node scripts/check-receipt-schema.mjs",
+    "test:ocr:e2e": "playwright test -c playwright.receipt.config.ts",
     "predev": "npm run ocr:assets",
     "prebuild": "npm run ocr:assets",
     "dev": "next dev",
@@ -56,6 +58,7 @@
     "tesseract.js": "7.0.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.10",
     "@eslint/eslintrc": "^3.3.5",
     "@playwright/test": "^1.61.1",
     "@testing-library/react": "^16.3.2",
