@@ -20,8 +20,7 @@ import {
 } from "@/lib/supabase/session";
 import { useAccessToken } from "@/lib/supabase/useSession";
 import { useWalletContext } from "./WalletContext";
-import { LS_USER, LS_PUBLIC_KEY } from "@/lib/utils/constants";
-import { clearWalletReadOnlyCache } from "@/lib/supabase/cacheInvalidation";
+import { LS_USER, LS_PUBLIC_KEY, NETWORK_PASSPHRASE } from "@/lib/utils/constants";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -121,7 +120,7 @@ async function authenticateWallet(
   const challenge = await challengeRes.json();
 
   const { signXDR } = await import("@/lib/freighter");
-  const signedXdr = await signXDR(challenge.xdr);
+  const signedXdr = await signXDR(challenge.xdr, NETWORK_PASSPHRASE, publicKey);
 
   const verifyRes = await fetch("/api/auth/verify", {
     method: "POST",
