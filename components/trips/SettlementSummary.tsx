@@ -32,6 +32,7 @@ import { Money } from "@/lib/money";
 import { useSettlementProposal } from "@/hooks/useSettlementProposal";
 import { disputeKey, proposalPaymentGate, type ProposalPaymentGate } from "@/lib/settlement/proposal";
 import { SettlementProposalPanel } from "@/components/trips/SettlementProposalPanel";
+import { AssetReadinessPanel } from "@/components/onboarding/AssetReadinessPanel";
 
 interface SettlementSummaryProps {
   trip: Trip;
@@ -127,6 +128,7 @@ function NetPaymentRow({
   } = useNetPayment({ tripId });
 
   const [showPathConfirm, setShowPathConfirm] = useState(false);
+  const [assetReady, setAssetReady] = useState<{ key: string; ready: boolean } | null>(null);
   const destinationAssetRef = useMemo(() => parseAssetKey(payment.asset), [payment.asset]);
 
   const {
@@ -150,10 +152,13 @@ function NetPaymentRow({
     }
   }, [loadPendingForPayer, payment.toWallet]);
 
+  const readinessKey = `${publicKey ?? ""}:${payment.fromWallet ?? ""}:${payment.toWallet ?? ""}:${payment.asset}:${payment.amount}`;
+
   const canPay =
     publicKey &&
     payment.toWallet &&
     isIdle &&
+    assetReady?.key === readinessKey && assetReady.ready &&
     publicKey === payment.fromWallet &&
     gate.mode !== "blocked";
   // Paying from an approved proposal carries its snapshot reference in the memo.
@@ -201,6 +206,9 @@ function NetPaymentRow({
         settled ? "bg-[#F0FFDB] border-[#2DD4BF]/40" : "bg-white border-[#E5E5E5]",
       )}
     >
+      {!settled && !!publicKey && publicKey === payment.fromWallet && (
+        <AssetReadinessPanel publicKey={publicKey} assetKey={payment.asset} requiredAmount={payment.amount} recipientAddress={payment.toWallet ?? ""} onReadyChange={(ready) => setAssetReady({ key: readinessKey, ready })} />
+      )}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2 min-w-0 text-sm font-semibold text-[#0F0F14]">
