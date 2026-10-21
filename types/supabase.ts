@@ -142,6 +142,18 @@ export type SettlementProposalResponseRow = {
   created_at: string;
 };
 
+export type ExpenseDisputeRow = {
+  id: string; trip_id: string; expense_id: string; share_member_id: string;
+  opened_by_wallet: string; category: "incorrect_amount" | "incorrect_split" | "not_shared" | "duplicate" | "already_paid" | "missing_context" | "other"; comment: string; evidence_receipt_ids: string[];
+  status: "open" | "upheld" | "resolved"; created_at: string; resolved_at: string | null;
+};
+
+export type ExpenseDisputeEventRow = {
+  id: string; dispute_id: string; actor_wallet: string;
+  action: "opened" | "upheld" | "dismissed" | "adjusted";
+  reason: string; created_at: string;
+};
+
 export type TripRoleAuditRow = {
   id: string;
   trip_id: string;
@@ -200,6 +212,7 @@ export type SettlementIntentRow = {
   ledger: number | null;
   on_chain: boolean;
   error_message: string | null;
+  quote_metadata: Json | null;
   created_by_wallet: string;
   created_at: string;
   updated_at: string;
@@ -348,6 +361,34 @@ export type SchemaMigrationRow = {
   name: string;
   applied_at: string;
   checksum: string;
+};
+
+export type SupportAuditLogRow = {
+  id: string;
+  staff_identifier: string;
+  query_type: string;
+  query_value: string;
+  results_count: number;
+  ip_address: string;
+  user_agent: string | null;
+  created_at: string;
+};
+
+export type SupportCorrectiveActionRow = {
+  id: string;
+  action_type: string;
+  target_id: string;
+  target_type: string;
+  ticket_ref: string;
+  reason: string;
+  details: Json;
+  proposed_by: string;
+  proposed_at: string;
+  approved_by: string | null;
+  approved_at: string | null;
+  status: "pending_approval" | "approved" | "executed" | "rejected" | "expired";
+  execution_result: Json | null;
+  created_at: string;
 };
 
 export type IdempotencyRecordRow = {
@@ -507,6 +548,18 @@ export type Database = {
         Row: SettlementProposalResponseRow;
         Insert: Omit<SettlementProposalResponseRow, "id" | "created_at">;
         // Append-only.
+        Update: Record<string, never>;
+        Relationships: [];
+      };
+      expense_disputes: {
+        Row: ExpenseDisputeRow;
+        Insert: Pick<ExpenseDisputeRow, "trip_id" | "expense_id" | "share_member_id" | "opened_by_wallet" | "category" | "comment" | "evidence_receipt_ids">;
+        Update: Partial<Pick<ExpenseDisputeRow, "status" | "resolved_at">>;
+        Relationships: [];
+      };
+      expense_dispute_events: {
+        Row: ExpenseDisputeEventRow;
+        Insert: Omit<ExpenseDisputeEventRow, "id" | "created_at">;
         Update: Record<string, never>;
         Relationships: [];
       };
@@ -693,6 +746,25 @@ export type Database = {
         Update: Partial<AuthChallengeRow>;
         Relationships: [];
       };
+
+      support_audit_logs: {
+        Row: SupportAuditLogRow;
+        Insert: Omit<SupportAuditLogRow, "id" | "created_at"> & {
+          id?: string;
+          created_at?: string;
+        };
+        Update: Partial<SupportAuditLogRow>;
+        Relationships: [];
+      };
+      support_corrective_actions: {
+        Row: SupportCorrectiveActionRow;
+        Insert: Omit<SupportCorrectiveActionRow, "id" | "created_at"> & {
+          id?: string;
+          created_at?: string;
+        };
+        Update: Partial<SupportCorrectiveActionRow>;
+        Relationships: [];
+      };
       auth_rate_limits: {
         Row: AuthRateLimitRow;
         Insert: {
@@ -707,6 +779,10 @@ export type Database = {
     };
     Views: { [_ in never]: never };
     Functions: {
+      resolve_expense_dispute: {
+        Args: { p_dispute_id: string; p_action: "upheld" | "dismissed" | "adjusted"; p_reason: string };
+        Returns: undefined;
+      };
       search_expenses: {
         Args: { p_trip_id: string | null; p_terms: string[] | null; p_category: string | null;
           p_tags: string[] | null; p_payer: string | null; p_status: string | null; p_asset: string | null;

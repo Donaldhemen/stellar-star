@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ChevronRight, ReceiptText, Trash2, Pencil } from "lucide-react";
 import { PaymentStatus } from "@/components/payment/PaymentStatus";
@@ -15,6 +15,8 @@ import { Money } from "@/components/ui/Money";
 import { useLocale } from "@/context/LocaleContext";
 import { describeSavedConversion, enteredAmountOf } from "@/lib/fx/quoteLock";
 import { settlementAssetOf } from "@/lib/settlement/expenseAsset";
+import { shareBalance } from "@/lib/settlement/installments";
+import { AssetReadinessPanel } from "@/components/onboarding/AssetReadinessPanel";
 
 interface ExpenseCardProps {
   expense: Expense;
@@ -54,6 +56,12 @@ export function ExpenseCard({ expense, currentUserPublicKey, onDelete, tripId }:
   // Exact: the saved entered amount, or an exact BigInt reconstruction for
   // rows saved before #323. Never float division.
   const fiatAmount = enteredAmountOf(expense);
+  const connectedShare = currentUserPublicKey
+    ? expense.shares.find((share) => share.walletAddress === currentUserPublicKey && share.memberId !== expense.paidByMemberId && !shareBalance(share).fullySettled)
+    : undefined;
+  const connectedShareAmount = connectedShare ? shareBalance(connectedShare).remaining : null;
+  const readinessKey = `${currentUserPublicKey ?? ""}:${expense.id}:${settlementAssetOf(expense)}:${connectedShareAmount ?? ""}`;
+  const readinessChanged = useCallback((ready: boolean) => setWalletReady({ key: readinessKey, ready }), [readinessKey]);
 
   const handlePay = async (share: SplitShare, amount?: string) => {
     setPayingShareId(share.memberId);
@@ -159,6 +167,17 @@ export function ExpenseCard({ expense, currentUserPublicKey, onDelete, tripId }:
             className="overflow-hidden"
           >
             <div className="px-4 pt-3 pb-4 border-t border-[#F5F5F5]">
+              {connectedShare && currentUserPublicKey && connectedShareAmount && (
+                <div className="mb-3">
+                  <AssetReadinessPanel
+                    publicKey={currentUserPublicKey}
+                    assetKey={settlementAssetOf(expense)}
+                    requiredAmount={connectedShareAmount}
+                    recipientAddress={payer?.walletAddress ?? ""}
+                    onReadyChange={readinessChanged}
+                  />
+                </div>
+              )}
               <p className="mb-3 rounded-lg bg-[#FAFAFA] px-3 py-2 text-[11px] text-[#666]" title="Saved with the expense; cannot be edited">
                 <span className="font-semibold text-[#444]">{t("expenses.exchangeRateLabel")} </span>
                 {describeSavedConversion(expense)}
@@ -172,6 +191,7 @@ export function ExpenseCard({ expense, currentUserPublicKey, onDelete, tripId }:
                 payerName={payer?.name ?? "Payer"}
                 payerWalletAddress={payer?.walletAddress}
                 totalAmount={expense.totalAmount}
+                disablePay={!!connectedShare && !(walletReady?.key === readinessKey && walletReady.ready)}
                 expenseTitle={expense.title}
                 onPay={handlePay}
                 payingShareId={payingShareId ?? undefined}
