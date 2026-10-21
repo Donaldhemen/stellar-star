@@ -1857,146 +1857,47 @@ CREATE POLICY export_audit_events_insert_actor ON public.export_audit_events
 
 GRANT SELECT, INSERT ON public.export_audit_events TO authenticated;
 
--- ============================================================================
--- Settlement proposals and member confirmation (#328, migrations/0014)
--- ============================================================================
--- A frozen snapshot (expense versions, balances, assets, transfers) with a
--- deterministic content hash; approvals count only for the exact hash.
+-- ─── 14. IDEMPOTENCY RECORDS (#312) ──────────────────────────────────────────
 
-CREATE TABLE IF NOT EXISTS public.settlement_proposals (
-  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  trip_id        TEXT        NOT NULL,
-  creator_wallet TEXT        NOT NULL,
-  content_hash   TEXT        NOT NULL CHECK (content_hash ~ '^[0-9a-f]{64}$'),
-  snapshot       JSONB       NOT NULL CHECK (jsonb_typeof(snapshot) = 'object'),
-  status         TEXT        NOT NULL DEFAULT 'open'
-                   CHECK (status IN ('open', 'revoked', 'superseded', 'invalidated')),
-  expires_at     TIMESTAMPTZ NOT NULL,
-  revoked_reason TEXT        CHECK (revoked_reason IS NULL OR char_length(revoked_reason) <= 500),
-  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT settlement_proposals_hash_unique UNIQUE (content_hash)
+CREATE TABLE IF NOT EXISTS public.idempotency_records (
+  key                 TEXT NOT NULL,
+  wallet_address      TEXT NOT NULL,
+  endpoint            TEXT NOT NULL,
+  request_fingerprint TEXT NOT NULL,
+  status              TEXT NOT NULL CHECK (status IN ('pending', 'completed', 'failed')),
+  response_status     INT,
+  response_body       JSONB,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  locked_until        TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '1 minute'),
+  CONSTRAINT idempotency_records_wallet_key_unique UNIQUE (wallet_address, key)
 );
 
--- At most one open proposal per trip: proposing again supersedes, never stacks.
-CREATE UNIQUE INDEX IF NOT EXISTS settlement_proposals_one_open_per_trip
-  ON public.settlement_proposals (trip_id)
-  WHERE status = 'open';
-CREATE INDEX IF NOT EXISTS idx_settlement_proposals_trip_created_at
-  ON public.settlement_proposals (trip_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_idempotency_records_lookup
+  ON public.idempotency_records (wallet_address, key);
 
--- Append-only: a member's latest response is the one that counts.
-CREATE TABLE IF NOT EXISTS public.settlement_proposal_responses (
-  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  proposal_id  UUID        NOT NULL REFERENCES public.settlement_proposals (id) ON DELETE CASCADE,
-  member_id    TEXT        NOT NULL,
-  wallet       TEXT        NOT NULL,
-  decision     TEXT        NOT NULL CHECK (decision IN ('approve', 'reject', 'request_edit')),
-  reason       TEXT        CHECK (reason IS NULL OR char_length(reason) <= 500),
-  content_hash TEXT        NOT NULL CHECK (content_hash ~ '^[0-9a-f]{64}$'),
-  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT settlement_proposal_responses_reason_required
-    CHECK (decision = 'approve' OR (reason IS NOT NULL AND char_length(btrim(reason)) > 0))
-);
+CREATE INDEX IF NOT EXISTS idx_idempotency_records_created_at
+  ON public.idempotency_records (created_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_settlement_proposal_responses_proposal_created_at
-  ON public.settlement_proposal_responses (proposal_id, created_at);
+ALTER TABLE public.idempotency_records ENABLE ROW LEVEL SECURITY;
 
-DROP TRIGGER IF EXISTS trg_01_settlement_proposals_set_updated_at ON public.settlement_proposals;
-CREATE TRIGGER trg_01_settlement_proposals_set_updated_at
-  BEFORE UPDATE ON public.settlement_proposals
-  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+DROP POLICY IF EXISTS idempotency_records_select_self ON public.idempotency_records;
+CREATE POLICY idempotency_records_select_self ON public.idempotency_records
+  FOR SELECT USING (wallet_address = public.current_wallet());
 
--- ─── ROW LEVEL SECURITY ──────────────────────────────────────────────────────
-ALTER TABLE public.settlement_proposals ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.settlement_proposal_responses ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS idempotency_records_insert_self ON public.idempotency_records;
+CREATE POLICY idempotency_records_insert_self ON public.idempotency_records
+  FOR INSERT WITH CHECK (wallet_address = public.current_wallet());
 
--- Trip members see and create proposals for their trips.
-DROP POLICY IF EXISTS settlement_proposals_select_member ON public.settlement_proposals;
-CREATE POLICY settlement_proposals_select_member ON public.settlement_proposals
-  FOR SELECT TO authenticated
-  USING (EXISTS (
-    SELECT 1 FROM public.trips t
-     WHERE t.id::TEXT = trip_id AND public.current_wallet() = ANY (t.member_wallets)
-  ));
+DROP POLICY IF EXISTS idempotency_records_update_self ON public.idempotency_records;
+CREATE POLICY idempotency_records_update_self ON public.idempotency_records
+  FOR UPDATE USING (wallet_address = public.current_wallet())
+             WITH CHECK (wallet_address = public.current_wallet());
 
-DROP POLICY IF EXISTS settlement_proposals_insert_member ON public.settlement_proposals;
-CREATE POLICY settlement_proposals_insert_member ON public.settlement_proposals
-  FOR INSERT TO authenticated
-  WITH CHECK (
-    creator_wallet = public.current_wallet()
-    AND status = 'open'
-    AND EXISTS (
-      SELECT 1 FROM public.trips t
-       WHERE t.id::TEXT = trip_id AND public.current_wallet() = ANY (t.member_wallets)
-    )
-  );
+DROP POLICY IF EXISTS idempotency_records_delete_self ON public.idempotency_records;
+CREATE POLICY idempotency_records_delete_self ON public.idempotency_records
+  FOR DELETE USING (wallet_address = public.current_wallet());
 
--- Members may move an open proposal to superseded/invalidated (proposing again,
--- or recording a detected material change); only the creator may revoke.
--- The snapshot and hash themselves are frozen by the trigger below.
-DROP POLICY IF EXISTS settlement_proposals_update_member ON public.settlement_proposals;
-CREATE POLICY settlement_proposals_update_member ON public.settlement_proposals
-  FOR UPDATE TO authenticated
-  USING (EXISTS (
-    SELECT 1 FROM public.trips t
-     WHERE t.id::TEXT = trip_id AND public.current_wallet() = ANY (t.member_wallets)
-  ))
-  WITH CHECK (status <> 'revoked' OR creator_wallet = public.current_wallet());
-
-CREATE OR REPLACE FUNCTION public.freeze_settlement_proposal()
-RETURNS TRIGGER
-LANGUAGE plpgsql
-AS $fn$
-BEGIN
-  IF NEW.snapshot IS DISTINCT FROM OLD.snapshot
-     OR NEW.content_hash IS DISTINCT FROM OLD.content_hash
-     OR NEW.trip_id IS DISTINCT FROM OLD.trip_id
-     OR NEW.creator_wallet IS DISTINCT FROM OLD.creator_wallet
-     OR NEW.expires_at IS DISTINCT FROM OLD.expires_at THEN
-    RAISE EXCEPTION 'A settlement proposal snapshot is frozen; propose again instead.'
-      USING ERRCODE = '42501';
-  END IF;
-  IF OLD.status <> 'open' AND NEW.status IS DISTINCT FROM OLD.status THEN
-    RAISE EXCEPTION 'Only an open proposal can change status.' USING ERRCODE = '42501';
-  END IF;
-  RETURN NEW;
-END;
-$fn$;
-
-DROP TRIGGER IF EXISTS trg_00_settlement_proposals_freeze ON public.settlement_proposals;
-CREATE TRIGGER trg_00_settlement_proposals_freeze
-  BEFORE UPDATE ON public.settlement_proposals
-  FOR EACH ROW EXECUTE FUNCTION public.freeze_settlement_proposal();
-
-DROP POLICY IF EXISTS settlement_proposal_responses_select_member ON public.settlement_proposal_responses;
-CREATE POLICY settlement_proposal_responses_select_member ON public.settlement_proposal_responses
-  FOR SELECT TO authenticated
-  USING (EXISTS (
-    SELECT 1 FROM public.settlement_proposals p
-      JOIN public.trips t ON t.id::TEXT = p.trip_id
-     WHERE p.id = proposal_id AND public.current_wallet() = ANY (t.member_wallets)
-  ));
-
--- A member answers only for themselves, and only an open proposal.
-DROP POLICY IF EXISTS settlement_proposal_responses_insert_self ON public.settlement_proposal_responses;
-CREATE POLICY settlement_proposal_responses_insert_self ON public.settlement_proposal_responses
-  FOR INSERT TO authenticated
-  WITH CHECK (
-    wallet = public.current_wallet()
-    AND EXISTS (
-      SELECT 1 FROM public.settlement_proposals p
-        JOIN public.trips t ON t.id::TEXT = p.trip_id
-       WHERE p.id = proposal_id
-         AND p.status = 'open'
-         AND p.expires_at > NOW()
-         AND p.content_hash = settlement_proposal_responses.content_hash
-         AND public.current_wallet() = ANY (t.member_wallets)
-    )
-  );
-
-GRANT SELECT, INSERT, UPDATE ON public.settlement_proposals TO authenticated;
-GRANT SELECT, INSERT ON public.settlement_proposal_responses TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.idempotency_records TO authenticated;
 
 -- ─── RECORD APPLIED MIGRATIONS ───────────────────────────────────────────────
 

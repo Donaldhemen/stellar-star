@@ -350,6 +350,18 @@ export type SchemaMigrationRow = {
   checksum: string;
 };
 
+export type IdempotencyRecordRow = {
+  key: string;
+  wallet_address: string;
+  endpoint: string;
+  request_fingerprint: string;
+  status: "pending" | "completed" | "failed";
+  response_status: number | null;
+  response_body: Json;
+  created_at: string;
+  locked_until: string;
+};
+
 export type Database = {
   public: {
     Tables: {
@@ -652,6 +664,22 @@ export type Database = {
         Row: SchemaMigrationRow;
         Insert: Omit<SchemaMigrationRow, "applied_at"> & { applied_at?: string };
         Update: Partial<Omit<SchemaMigrationRow, "version">>;
+        Relationships: [];
+      };
+      idempotency_records: {
+        Row: IdempotencyRecordRow;
+        Insert: {
+          key: string;
+          wallet_address: string;
+          endpoint: string;
+          request_fingerprint: string;
+          status: "pending" | "completed" | "failed";
+          response_status?: number | null;
+          response_body?: Json;
+          created_at?: string;
+          locked_until?: string;
+        };
+        Update: Partial<IdempotencyRecordRow>;
         Relationships: [];
       };
       auth_challenges: {
