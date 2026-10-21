@@ -117,6 +117,18 @@ export type SettlementProposalResponseRow = {
   created_at: string;
 };
 
+export type TripRoleAuditRow = {
+  id: string;
+  trip_id: string;
+  member_id: string;
+  previous_role: "owner" | "organizer" | "contributor" | "viewer" | "custom";
+  next_role: "owner" | "organizer" | "contributor" | "viewer" | "custom";
+  previous_custom_permissions: string[];
+  next_custom_permissions: string[];
+  changed_by_wallet: string;
+  created_at: string;
+};
+
 export type AuthChallengeRow = {
   nonce: string;
   address: string;
@@ -397,6 +409,12 @@ export type Database = {
         >;
         Relationships: [];
       };
+      trip_role_audit: {
+        Row: TripRoleAuditRow;
+        Insert: Record<string, never>;
+        Update: Record<string, never>;
+        Relationships: [];
+      };
       trip_templates: {
         Row: TripTemplateRow;
         Insert: Omit<TripTemplateRow, "id" | "created_at" | "updated_at"> & {
@@ -639,6 +657,35 @@ export type Database = {
       current_wallet: {
         Args: Record<string, never>;
         Returns: string;
+      };
+      trip_member_role: {
+        Args: { p_trip_id: string; p_wallet: string };
+        Returns: string;
+      };
+      trip_has_permission: {
+        Args: { p_trip_id: string; p_permission: string };
+        Returns: boolean;
+      };
+      expense_has_permission: {
+        Args: { p_expense_id: string; p_permission: string };
+        Returns: boolean;
+      };
+      set_trip_member_role: {
+        Args: {
+          p_trip_id: string;
+          p_member_id: string;
+          p_role: string;
+          p_custom_permissions?: string[];
+        };
+        Returns: TripRow;
+      };
+      transfer_trip_ownership: {
+        Args: { p_trip_id: string; p_new_owner_member_id: string };
+        Returns: TripRow;
+      };
+      add_expense_to_trip: {
+        Args: { p_trip_id: string; p_expense_id: string };
+        Returns: string[];
       };
       consume_auth_challenge: {
         Args: {
