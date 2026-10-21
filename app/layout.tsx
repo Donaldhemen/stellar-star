@@ -27,6 +27,7 @@ const metadataBase = (() => {
 })();
 
 export const metadata: Metadata = {
+  manifest: "/manifest.webmanifest",
   metadataBase,
   title: {
     default: "Stellar-star - Split Bills on the Stellar Blockchain",
@@ -89,6 +90,7 @@ import { LocaleProvider } from "@/context/LocaleContext";
 import { AnalyticsProvider } from "@/context/AnalyticsContext";
 import { ConsentBanner } from "@/components/analytics/ConsentBanner";
 import { ConsentModal } from "@/components/analytics/ConsentModal";
+import { OfflineRuntime } from "@/components/system/OfflineRuntime";
 
 export default function RootLayout({
   children,
@@ -110,6 +112,7 @@ export default function RootLayout({
                     <TripProvider>
                       <ConfigProvider>
                         <NetworkMismatchBanner />
+                        <OfflineRuntime />
                         {children}
                         <ConsentBanner />
                         <ConsentModal />

@@ -329,6 +329,12 @@ export function useNetPayment({ tripId }: UseNetPaymentOpts) {
     async ({ debts, totalAmount, asset, payerWalletAddress, tripName, memoText: memoOverride }: PayNetParams) => {
       const requestId = createRequestId();
 
+      if (typeof navigator !== "undefined" && !navigator.onLine) {
+        setPaymentState({ status: "blocked", message: "A live connection is required for signing and submitting payments." });
+        toastError("Connection required", "Signing, payment submission, and settlement recording are online-only. Reconnect to continue.");
+        return;
+      }
+
       if (!publicKey) {
         toastError("Wallet not connected", "Please connect your Freighter wallet first.");
         return;
@@ -630,6 +636,12 @@ export function useNetPayment({ tripId }: UseNetPaymentOpts) {
   const payNetPathSettlement = useCallback(
     async ({ debts, tripName, payerWalletAddress, path, memoText: memoOverride }: PayNetPathParams) => {
       const requestId = createRequestId();
+
+      if (typeof navigator !== "undefined" && !navigator.onLine) {
+        setPaymentState({ status: "blocked", message: "A live connection is required for signing and submitting payments." });
+        toastError("Connection required", "Signing, payment submission, and settlement recording are online-only. Reconnect to continue.");
+        return;
+      }
 
       if (!publicKey) {
         toastError("Wallet not connected", "Please connect your Freighter wallet first.");
