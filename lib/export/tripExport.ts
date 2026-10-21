@@ -26,7 +26,7 @@ import { amount, raw, text, toCsv, type CsvCell } from "./csv";
 export type ExportableExpense = Expense & {
   enteredAmount?: string;
   exchangeRateSource?: string;
-  category?: string;
+  category?: string | null;
 };
 
 export const CSV_HEADER = [
