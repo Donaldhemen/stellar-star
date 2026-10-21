@@ -817,6 +817,7 @@ CREATE OR REPLACE FUNCTION public.claim_trip_invite(
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = public, pg_temp
 AS $fn$
 DECLARE
   v_invite RECORD;
@@ -1146,12 +1147,15 @@ CREATE OR REPLACE FUNCTION public.update_expense_versioned(
 RETURNS SETOF public.expenses
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = public, pg_temp
 AS $fn$
 DECLARE
   v_current_version INT;
+  v_expense public.expenses;
+  v_caller TEXT := public.current_wallet();
 BEGIN
   -- We use SELECT FOR UPDATE to serialize writes on this expense
-  SELECT version INTO v_current_version
+  SELECT * INTO v_expense
     FROM public.expenses
    WHERE id = p_id
      FOR UPDATE;
@@ -1159,6 +1163,12 @@ BEGIN
   IF NOT FOUND THEN
     RAISE EXCEPTION 'Expense not found';
   END IF;
+
+  IF v_caller IS NOT NULL AND NOT (v_expense.member_wallets @> ARRAY[v_caller]) THEN
+    RAISE EXCEPTION 'Unauthorized: only expense members can update this expense' USING ERRCODE = '42501';
+  END IF;
+
+  v_current_version := v_expense.version;
   
   IF v_current_version <> p_expected_version THEN
     RAISE EXCEPTION 'Version conflict: expected %, got %', p_expected_version, v_current_version USING ERRCODE = '40001';
@@ -1321,9 +1331,12 @@ BEGIN
 END;
 $fn$;
 
-GRANT EXECUTE ON FUNCTION public.update_expense_versioned(UUID, INT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, JSONB, JSONB, BOOLEAN) TO anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.mark_share_paid(UUID, TEXT, TEXT, BOOLEAN) TO anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.mark_shares_paid_batch(JSONB, TEXT) TO anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.update_expense_versioned(UUID, INT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, JSONB, JSONB, BOOLEAN) FROM anon;
+GRANT EXECUTE ON FUNCTION public.update_expense_versioned(UUID, INT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, JSONB, JSONB, BOOLEAN) TO authenticated;
+REVOKE EXECUTE ON FUNCTION public.mark_share_paid(UUID, TEXT, TEXT, BOOLEAN) FROM anon;
+GRANT EXECUTE ON FUNCTION public.mark_share_paid(UUID, TEXT, TEXT, BOOLEAN) TO authenticated;
+REVOKE EXECUTE ON FUNCTION public.mark_shares_paid_batch(JSONB, TEXT) FROM anon;
+GRANT EXECUTE ON FUNCTION public.mark_shares_paid_batch(JSONB, TEXT) TO authenticated;
 
 -- ============================================================================
 -- 12. CONCURRENT EXPENSE EDITING (ISSUE #203)
@@ -1345,12 +1358,15 @@ CREATE OR REPLACE FUNCTION public.update_expense_versioned(
 RETURNS SETOF public.expenses
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = public, pg_temp
 AS $fn$
 DECLARE
   v_current_version INT;
+  v_expense public.expenses;
+  v_caller TEXT := public.current_wallet();
 BEGIN
   -- We use SELECT FOR UPDATE to serialize writes on this expense
-  SELECT version INTO v_current_version
+  SELECT * INTO v_expense
     FROM public.expenses
    WHERE id = p_id
      FOR UPDATE;
@@ -1358,6 +1374,12 @@ BEGIN
   IF NOT FOUND THEN
     RAISE EXCEPTION 'Expense not found';
   END IF;
+
+  IF v_caller IS NOT NULL AND NOT (v_expense.member_wallets @> ARRAY[v_caller]) THEN
+    RAISE EXCEPTION 'Unauthorized: only expense members can update this expense' USING ERRCODE = '42501';
+  END IF;
+
+  v_current_version := v_expense.version;
   
   IF v_current_version <> p_expected_version THEN
     RAISE EXCEPTION 'Version conflict: expected %, got %', p_expected_version, v_current_version USING ERRCODE = '40001';
@@ -1520,9 +1542,12 @@ BEGIN
 END;
 $fn$;
 
-GRANT EXECUTE ON FUNCTION public.update_expense_versioned(UUID, INT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, JSONB, JSONB, BOOLEAN) TO anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.mark_share_paid(UUID, TEXT, TEXT, BOOLEAN) TO anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.mark_shares_paid_batch(JSONB, TEXT) TO anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.update_expense_versioned(UUID, INT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, JSONB, JSONB, BOOLEAN) FROM anon;
+GRANT EXECUTE ON FUNCTION public.update_expense_versioned(UUID, INT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, JSONB, JSONB, BOOLEAN) TO authenticated;
+REVOKE EXECUTE ON FUNCTION public.mark_share_paid(UUID, TEXT, TEXT, BOOLEAN) FROM anon;
+GRANT EXECUTE ON FUNCTION public.mark_share_paid(UUID, TEXT, TEXT, BOOLEAN) TO authenticated;
+REVOKE EXECUTE ON FUNCTION public.mark_shares_paid_batch(JSONB, TEXT) FROM anon;
+GRANT EXECUTE ON FUNCTION public.mark_shares_paid_batch(JSONB, TEXT) TO authenticated;
 
 -- ============================================================================
 -- 13. MULTI-INSTANCE AUTH & RATE LIMITING (ISSUE #204)
@@ -1537,6 +1562,7 @@ CREATE OR REPLACE FUNCTION public.record_auth_challenge(
 RETURNS BOOLEAN
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = public, pg_temp
 AS $fn$
 DECLARE
   v_count INT;
@@ -1581,6 +1607,7 @@ CREATE OR REPLACE FUNCTION public.consume_auth_challenge(
 RETURNS BOOLEAN
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = public, pg_temp
 AS $fn$
 DECLARE
   v_deleted_nonce TEXT;
@@ -1821,5 +1848,6 @@ VALUES
   ('0005', '0005_verify_trip_invite_rpc', 'verify_trip_invite_v1'),
   ('0006', '0006_settlement_request_ids', 'settlement_request_ids_v1'),
   ('0007', '0007_composite_query_indexes', 'composite_query_indexes_v1'),
-  ('0011', '0011_export_audit_events', 'export_audit_events_v1')
+  ('0011', '0011_export_audit_events', 'export_audit_events_v1'),
+  ('0012', '0012_security_review_hardening', 'sec_hardening_309_v1')
 ON CONFLICT (version) DO NOTHING;
