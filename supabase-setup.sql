@@ -1979,7 +1979,10 @@ CREATE OR REPLACE FUNCTION public.trip_member_role(p_trip_id UUID, p_wallet TEXT
 RETURNS TEXT LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
   SELECT COALESCE(member ->> 'role', CASE WHEN upper(btrim(member ->> 'walletAddress')) = upper(btrim(t.created_by_wallet)) THEN 'owner' ELSE 'contributor' END)
   FROM public.trips t CROSS JOIN LATERAL jsonb_array_elements(COALESCE(t.members, '[]'::jsonb)) member
-  WHERE t.id = p_trip_id AND upper(btrim(COALESCE(member ->> 'walletAddress', ''))) = upper(btrim(COALESCE(p_wallet, ''))) LIMIT 1;
+  WHERE t.id = p_trip_id
+    AND upper(btrim(COALESCE(p_wallet, ''))) = upper(btrim(COALESCE(public.current_wallet(), '')))
+    AND upper(btrim(COALESCE(member ->> 'walletAddress', ''))) = upper(btrim(COALESCE(p_wallet, '')))
+  LIMIT 1;
 $$;
 
 CREATE OR REPLACE FUNCTION public.trip_has_permission(p_trip_id UUID, p_permission TEXT)
@@ -2255,7 +2258,9 @@ BEGIN
   v_actor_id := v_actor ->> 'id';
   IF v_actor_id = p_new_owner_member_id THEN RAISE EXCEPTION 'ALREADY_OWNER'; END IF;
   v_actor_role := COALESCE(v_actor ->> 'role', 'owner');
-  v_target_role := COALESCE(v_target ->> 'role', 'contributor');
+  v_target_role := COALESCE(v_target ->> 'role',
+    CASE WHEN upper(btrim(COALESCE(v_target ->> 'walletAddress', ''))) = upper(btrim(v_trip.created_by_wallet))
+      THEN 'owner' ELSE 'contributor' END);
   SELECT COALESCE(array_agg(value), ARRAY[]::TEXT[]) INTO v_actor_permissions
     FROM jsonb_array_elements_text(COALESCE(v_actor -> 'customPermissions', '[]'::jsonb)) value;
   SELECT COALESCE(array_agg(value), ARRAY[]::TEXT[]) INTO v_target_permissions
@@ -2306,6 +2311,23 @@ DROP POLICY IF EXISTS expense_receipts_select_members ON public.expense_receipts
 CREATE POLICY expense_receipts_select_members ON public.expense_receipts FOR SELECT TO authenticated
   USING (public.expense_has_permission(expense_id, 'receipts.manage'));
 GRANT SELECT ON public.expense_receipts TO authenticated;
+DO $receipt_bucket$
+BEGIN
+  IF to_regclass('storage.buckets') IS NULL THEN RETURN; END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'storage' AND table_name = 'buckets' AND column_name = 'allowed_mime_types') THEN
+    INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+    VALUES ('expense-receipts', 'expense-receipts', FALSE, 4194304,
+      ARRAY['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'application/pdf'])
+    ON CONFLICT (id) DO UPDATE SET public = FALSE, file_size_limit = EXCLUDED.file_size_limit,
+      allowed_mime_types = EXCLUDED.allowed_mime_types;
+  ELSE
+    INSERT INTO storage.buckets (id, name, public)
+    VALUES ('expense-receipts', 'expense-receipts', FALSE)
+    ON CONFLICT (id) DO UPDATE SET public = FALSE;
+  END IF;
+END
+$receipt_bucket$;
 
 CREATE TABLE IF NOT EXISTS public.payment_reminders (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -2377,6 +2399,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS reminder_schedules_one_active
 CREATE INDEX IF NOT EXISTS idx_reminder_schedules_due
   ON public.reminder_schedules (next_run_at) WHERE active;
 
+DROP TRIGGER IF EXISTS trg_01_payment_reminders_set_updated_at ON public.payment_reminders;
+CREATE TRIGGER trg_01_payment_reminders_set_updated_at BEFORE UPDATE ON public.payment_reminders
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+DROP TRIGGER IF EXISTS trg_01_reminder_preferences_set_updated_at ON public.reminder_preferences;
+CREATE TRIGGER trg_01_reminder_preferences_set_updated_at BEFORE UPDATE ON public.reminder_preferences
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+DROP TRIGGER IF EXISTS trg_01_reminder_schedules_set_updated_at ON public.reminder_schedules;
+CREATE TRIGGER trg_01_reminder_schedules_set_updated_at BEFORE UPDATE ON public.reminder_schedules
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
 ALTER TABLE public.payment_reminders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.reminder_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.reminder_preferences ENABLE ROW LEVEL SECURITY;
@@ -2398,7 +2430,10 @@ CREATE POLICY payment_reminders_update_party ON public.payment_reminders FOR UPD
 DROP POLICY IF EXISTS reminder_events_insert_actor ON public.reminder_events;
 CREATE POLICY reminder_events_insert_actor ON public.reminder_events FOR INSERT TO authenticated
   WITH CHECK (actor_wallet = public.current_wallet() AND (
-    reminder_id IS NULL OR EXISTS (
+    (reminder_id IS NULL AND kind IN (
+      'muted_trip', 'unmuted_trip', 'muted_sender', 'unmuted_sender',
+      'opted_in', 'opted_out', 'unsubscribed', 'schedule_created', 'schedule_disabled'
+    )) OR EXISTS (
       SELECT 1 FROM public.payment_reminders r WHERE r.id = reminder_id AND (
         (r.sender_wallet = public.current_wallet() AND public.trip_has_permission(r.trip_id::UUID, 'reminders.manage'))
         OR (r.recipient_wallet = public.current_wallet()
