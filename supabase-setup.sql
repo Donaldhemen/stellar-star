@@ -29,18 +29,32 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;   -- gen_random_uuid()
 -- the planner evaluates it once per statement and can still use the GIN and
 -- btree indexes on member_wallets / created_by_wallet.
 
+CREATE TABLE IF NOT EXISTS public.deleted_accounts (
+  wallet_address TEXT PRIMARY KEY,
+  deleted_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  reason         TEXT NOT NULL DEFAULT 'user_request'
+);
+
+CREATE INDEX IF NOT EXISTS idx_deleted_accounts_deleted_at
+  ON public.deleted_accounts (deleted_at DESC);
+
+ALTER TABLE public.deleted_accounts ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "deleted_accounts_select_all" ON public.deleted_accounts
+  FOR SELECT USING (true);
+
 CREATE OR REPLACE FUNCTION public.current_wallet()
 RETURNS TEXT
 LANGUAGE SQL
 STABLE
 AS $fn$
-  SELECT NULLIF(
-    COALESCE(
-      current_setting('request.jwt.claims', true)::jsonb ->> 'wallet_address',
-      ''
-    ),
-    ''
-  );
+  SELECT CASE
+    WHEN EXISTS (
+      SELECT 1 FROM public.deleted_accounts
+       WHERE wallet_address = NULLIF(COALESCE(current_setting('request.jwt.claims', true)::jsonb ->> 'wallet_address', ''), '')
+    ) THEN NULL
+    ELSE NULLIF(COALESCE(current_setting('request.jwt.claims', true)::jsonb ->> 'wallet_address', ''), '')
+  END;
 $fn$;
 
 COMMENT ON FUNCTION public.current_wallet() IS

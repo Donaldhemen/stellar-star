@@ -152,13 +152,13 @@ Gatekeeper: **Sarah Jenkins** (`@legal-counsel`)
 | ID | Item | Priority | Owner | Status | Proof Link | Expiry / Review Date |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **LEG-01** | Public ledger immutability and non-custodial disclosure | P0 | Sarah Jenkins (`@legal-counsel`) | APPROVED | [`SECURITY.md#known-limitations`](SECURITY.md#known-limitations) | 2026-11-19 |
-| **LEG-02** | Privacy, data retention boundaries, and off-chain deletion policy | P0 | Sarah Jenkins (`@legal-counsel`) | APPROVED | [`Issue.md`](../Issue.md) | 2026-11-19 |
+| **LEG-02** | Privacy, data retention boundaries, and off-chain deletion policy | P0 | Sarah Jenkins (`@legal-counsel`) | APPROVED | [`PRIVACY.md`](PRIVACY.md) | 2026-11-19 |
 | **LEG-03** | PII redaction in telemetry, error payloads, and logs | P0 | Sarah Jenkins (`@legal-counsel`) | APPROVED | [`THREAT_MODEL.md`](THREAT_MODEL.md) | 2026-11-19 |
 | **LEG-04** | Terms of service and non-custodial risk disclosure | P1 | Sarah Jenkins (`@legal-counsel`) | APPROVED | [`MAINNET_READINESS.md#design-note`](MAINNET_READINESS.md#design-note) | 2026-11-19 |
 
 **Detailed Verifications:**
 - [x] **LEG-01**: Clear disclosures communicate to users that on-chain Stellar transactions are permanent, public, and cannot be revoked by the application.
-- [x] **LEG-02**: Application data (trip titles, expense descriptions, invitations) stored in Supabase is governed by data retention and deletion workflows outlined in the product backlog.
+- [x] **LEG-02**: Application data stored in Supabase is governed by data retention and deletion workflows defined in `docs/PRIVACY.md` and executed via `/api/account/delete`.
 - [x] **LEG-03**: Error logging strictly sanitizes transaction payloads, preventing leakage of private keys or sensitive user context into monitoring sinks.
 
 ---
