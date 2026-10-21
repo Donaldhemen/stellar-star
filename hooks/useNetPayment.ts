@@ -692,6 +692,18 @@ export function useNetPayment({ tripId }: UseNetPaymentOpts) {
             payerWallet: payerWalletAddress,
             memberWallet: publicKey,
             amount: debt.amount.toString(),
+            quoteMetadata: {
+              type: "stellar-path-payment-estimate",
+              quotedAt: path.quotedAt,
+              sourceAsset: path.sourceAsset,
+              sourceAmount: path.sourceAmount,
+              destinationAsset: path.destinationAsset,
+              destinationAmount: path.destinationAmount,
+              route: path.path,
+              slippageBps: path.slippageBps,
+              sendMax: path.sendMax,
+              routePriceImpactBps: path.priceImpactBps,
+            },
           });
           if (res.ok) {
             acquiredIntents.push(res.intent);
