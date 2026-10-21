@@ -91,6 +91,7 @@ import { AnalyticsProvider } from "@/context/AnalyticsContext";
 import { ConsentBanner } from "@/components/analytics/ConsentBanner";
 import { ConsentModal } from "@/components/analytics/ConsentModal";
 import { OfflineRuntime } from "@/components/system/OfflineRuntime";
+import { MotionConfig } from "framer-motion";
 
 export default function RootLayout({
   children,
@@ -98,11 +99,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className="scroll-smooth" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning>
       <body
         className={`${poppins.className} bg-[#F6F6F6] text-[#0F0F14] font-sans antialiased`}
         suppressHydrationWarning
       >
+        <MotionConfig reducedMotion="user">
         <LocaleProvider>
           <AnalyticsProvider>
             <ToastProvider>
@@ -124,6 +126,7 @@ export default function RootLayout({
             </ToastProvider>
           </AnalyticsProvider>
         </LocaleProvider>
+        </MotionConfig>
       </body>
     </html>
   );
