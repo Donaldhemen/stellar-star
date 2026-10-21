@@ -162,6 +162,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Identifies the in-flight load, so a slow response for a wallet the user has
   // already switched away from is discarded instead of overwriting state.
   const loadIdRef = useRef(0);
+  const previousWalletRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const previousWallet = previousWalletRef.current;
+    if (previousWallet && previousWallet !== publicKey) {
+      clearWalletReadOnlyCache(previousWallet);
+      clearUserCache(previousWallet);
+    }
+    previousWalletRef.current = publicKey;
+  }, [publicKey]);
 
   const isAuthenticated = Boolean(user) && isConnected && Boolean(token);
 
@@ -344,6 +354,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
     setError(null);
     clearUserCache(publicKey);
+    if (publicKey) clearWalletReadOnlyCache(publicKey);
     // Drops the session and tears down every open Realtime channel, so the
     // next wallet does not inherit subscriptions opened for this one.
     resetSupabaseClient();

@@ -8,6 +8,7 @@ import {
   Address,
   xdr,
   NotFoundError,
+  Keypair,
 } from "@stellar/stellar-sdk";
 import type { Attestation } from "@/lib/settlement/attest";
 import { sorobanServer } from "./soroban";
@@ -72,6 +73,8 @@ export function decodeContractError(raw: string): string {
         return "The attestation is for a different asset than this contract settles in.";
       case ContractErrorCode.UnknownStorageVersion:
         return "The contract's stored data is newer than this app understands. Update the app.";
+      case ContractErrorCode.InvalidSignerSet:
+        return "The attestation did not contain the configured number of distinct valid signers.";
       default:
         return `Contract error #${code}.`;
     }
@@ -389,18 +392,22 @@ function contractReady(caller: string): boolean {
  *
  * Soroban represents such a struct as an `ScMap` keyed by field-name symbols,
  * and the host requires those keys in sorted order — hence the field ordering
- * below (asset, expires_at, nonce, signature), which is alphabetical rather
+ * below (asset, expires_at, nonce, signatures), which is alphabetical rather
  * than the declaration order in `attest.rs`.
  */
 function attestationToScVal(attestation: Attestation): xdr.ScVal {
   const entry = (key: string, val: xdr.ScVal) =>
     new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol(key), val });
 
+  const signatures = attestation.signatures.map((signature) => xdr.ScVal.scvMap([
+    entry("signature", xdr.ScVal.scvBytes(Buffer.from(signature.signature, "hex"))),
+    entry("signer", xdr.ScVal.scvBytes(Buffer.from(Keypair.fromPublicKey(signature.signer).rawPublicKey()))),
+  ]));
   return xdr.ScVal.scvMap([
     entry("asset", new Address(attestation.claim.asset).toScVal()),
     entry("expires_at", nativeToScVal(BigInt(attestation.claim.expiresAt), { type: "u64" })),
     entry("nonce", xdr.ScVal.scvBytes(Buffer.from(attestation.claim.nonce, "hex"))),
-    entry("signature", xdr.ScVal.scvBytes(Buffer.from(attestation.signature, "hex"))),
+    entry("signatures", xdr.ScVal.scvVec(signatures)),
   ]);
 }
 

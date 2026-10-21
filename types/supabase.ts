@@ -212,6 +212,7 @@ export type SettlementIntentRow = {
   ledger: number | null;
   on_chain: boolean;
   error_message: string | null;
+  quote_metadata: Json | null;
   created_by_wallet: string;
   created_at: string;
   updated_at: string;

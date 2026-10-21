@@ -131,6 +131,7 @@ function NetPaymentRow({
 
   const {
     path,
+    referenceRate,
     loading: pathLoading,
     failure: pathFailure,
     slippageBps,
@@ -314,6 +315,7 @@ function NetPaymentRow({
         }}
         recipientName={payment.to}
         path={path}
+        referenceRate={referenceRate}
         loading={pathLoading}
         failure={pathFailure}
         slippageBps={slippageBps}
