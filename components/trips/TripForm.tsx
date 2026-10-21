@@ -4,15 +4,19 @@ import React, { useState } from "react";
 import { Plus, Trash2, UserPlus } from "lucide-react";
 import type { Member } from "@/types/expense";
 import type { Contact } from "@/types/contact";
-import type { TripFormData } from "@/types/trip";
+import type { TripFormData, TripPermissions, RecurringExpenseRule } from "@/types/trip";
+import { normalizePermissions, normalizeRecurringRules, validateTripDraft } from "@/lib/trip/templates";
 import { Input } from "@/components/ui/Input";
 import { TripPermissionsFields } from "@/components/trips/TripPermissionsFields";
 import { TripRecurringRulesEditor } from "@/components/trips/TripRecurringRulesEditor";
 import { findDuplicateWalletErrors, isValidStellarAddress } from "@/lib/split/calculator";
 import { canonicalWallet, contactToMember, walletTrust } from "@/lib/contacts/contacts";
 import { cn } from "@/lib/utils";
+import { trackAnalyticsEvent } from "@/lib/analytics/sink";
 
 interface TripFormProps {
+  submitLabel?: string;
+  submitting?: boolean;
   onSubmit: (data: TripFormData) => void;
   onCancel: () => void;
   initialData?: Partial<TripFormData>;
@@ -39,6 +43,8 @@ export function TripForm({
   currentUserPublicKey,
   currentUserName,
   contacts = [],
+  submitLabel = "Create Trip",
+  submitting = false,
 }: TripFormProps) {
   const [name, setName] = useState(initialData?.name ?? "");
   const [description, setDescription] = useState(initialData?.description ?? "");
@@ -144,16 +150,24 @@ export function TripForm({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!validate()) return;
+    const cleanMembers = members
+      .filter((m) => m.name.trim())
+      .map((m) => ({
+        ...m,
+        name: m.name.trim(),
+        walletAddress: m.walletAddress?.trim() ? m.walletAddress.trim().toUpperCase() : undefined,
+      }));
+
+    trackAnalyticsEvent("trip_created", {
+      member_count: cleanMembers.length,
+      has_dates: Boolean(startsOn || endsOn),
+      has_recurring_rules: recurringRules.length > 0,
+    });
+
     onSubmit({
       name: name.trim(),
       description: description.trim(),
-      members: members
-        .filter((m) => m.name.trim())
-        .map((m) => ({
-          ...m,
-          name: m.name.trim(),
-          walletAddress: m.walletAddress?.trim() ? m.walletAddress.trim().toUpperCase() : undefined,
-        })),
+      members: cleanMembers,
       startsOn: startsOn || undefined,
       endsOn: endsOn || undefined,
       recurringRules: normalizeRecurringRules(recurringRules),
