@@ -10,6 +10,7 @@ import {
   receiptError,
   receiptJson,
 } from "@/lib/receipts/http";
+import { enforceAbuseProtection } from "@/lib/security/abuseProtection";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,6 +27,9 @@ export async function GET(request: NextRequest, context: Context) {
 
   const clients = receiptClients(request);
   if ("response" in clients) return clients.response;
+
+  const abuse = await enforceAbuseProtection(request, "receipt.upload", clients.wallet);
+  if (!abuse.ok) return abuse.response;
 
   try {
     const access = await loadExpenseAccess(clients.userClient, id);

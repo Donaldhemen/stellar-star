@@ -9,6 +9,7 @@ import {
   IdempotencyConflictError,
   IdempotencyLockedError,
 } from "@/lib/idempotency/store";
+import { enforceAbuseProtection, enforceIdempotencyKeyLimit } from "@/lib/security/abuseProtection";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,6 +25,8 @@ export async function POST(request: NextRequest) {
       { status: 401 },
     );
   }
+  const abuse = await enforceAbuseProtection(request, "invitation.create", session.wallet_address);
+  if (!abuse.ok) return abuse.response;
 
   let body: {
     tripId?: string;
@@ -47,6 +50,8 @@ export async function POST(request: NextRequest) {
     const origin = request.nextUrl.origin;
     const serverClient = createServerClientForToken(token);
     const idempotencyKey = extractIdempotencyKey(request, body);
+    const keyLimit = await enforceIdempotencyKeyLimit(request, session.wallet_address, idempotencyKey);
+    if (!keyLimit.ok) return keyLimit.response;
 
     const result = await withIdempotency({
       client: serverClient,
