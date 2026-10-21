@@ -32,6 +32,9 @@ import {
   type ConflictDetails,
 } from "@/lib/expense/conflictResolver";
 import type { QueryCacheDomain } from "./cacheInvalidation";
+import { normalizeTags } from "@/lib/expense/tags";
+import { normalizeCategory } from "@/lib/expense/categories";
+import { searchTerms, dateRangeBounds, encodeHistoryCursor, type ExpenseHistoryFilters, type HistoryCursor } from "@/lib/expense/historyFilters";
 import { applyInstallment, markInstallmentProof, type NewInstallment } from "@/lib/settlement/installments";
 import { Money } from "@/lib/money";
 import {
@@ -43,6 +46,10 @@ import {
 } from "@/lib/trip/templates";
 
 export { ExpenseConflictError, type ConflictDetails };
+
+export function cacheDomainsForMutation(mutation: "trip_write" | "trip_members_write" | "trip_expense_link" | "expense_write"): QueryCacheDomain[] {
+  return mutation === "trip_write" ? ["trips"] : ["trips", "expenses"];
+}
 
 // ─── Domain shapes ────────────────────────────────────────────────────────────
 
@@ -210,6 +217,8 @@ export function rowToUser(row: UserRow): UserProfile {
 
 export function rowToExpense(row: ExpenseRow): Expense {
   return {
+    category: normalizeCategory(row.category),
+    tags: normalizeTags(row.tags),
     id: row.id,
     title: row.title,
     description: row.description ?? undefined,
@@ -331,6 +340,8 @@ export function expenseToInsert(expense: Expense, creatorWallet: string): Expens
     id: expense.id,
     title: expense.title,
     description: expense.description ?? null,
+    category: expense.category ?? null,
+    tags: normalizeTags(expense.tags),
     total_amount: expense.totalAmount,
     currency: expense.currency ?? "XLM",
     exchange_rate: expense.exchangeRate ?? null,
@@ -428,7 +439,7 @@ export function tripToUpdate(updates: Partial<Trip>): TripUpdate {
 
 const USER_COLUMNS = "id, wallet_address, display_name, created_at, updated_at, last_login_at";
 const EXPENSE_COLUMNS =
-  "id, title, description, total_amount, currency, exchange_rate, exchange_rate_timestamp, exchange_rate_source, entered_amount, settlement_asset, split_mode, paid_by_member_id, members, shares, settled, created_by_wallet, member_wallets, created_at, updated_at";
+  "id, title, description, category, tags, total_amount, currency, exchange_rate, exchange_rate_timestamp, exchange_rate_source, entered_amount, settlement_asset, split_mode, paid_by_member_id, members, shares, settled, created_by_wallet, member_wallets, created_at, updated_at";
 const TRIP_COLUMNS =
   "id, name, description, members, expense_ids, settled, created_by_wallet, member_wallets, starts_on, ends_on, recurring_rules, permissions, source_template_id, copied_from_trip_id, workspace, created_at, updated_at";
 const TRIP_TEMPLATE_COLUMNS =

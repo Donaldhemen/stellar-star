@@ -4,7 +4,7 @@ import React, { useState } from "react";
 import { Plus, Trash2, UserPlus } from "lucide-react";
 import type { Member } from "@/types/expense";
 import type { Contact } from "@/types/contact";
-import type { TripFormData, RecurringExpenseRule, TripPermissions } from "@/types/trip";
+import type { TripFormData, TripPermissions, RecurringExpenseRule } from "@/types/trip";
 import { normalizePermissions, normalizeRecurringRules, validateTripDraft } from "@/lib/trip/templates";
 import { Input } from "@/components/ui/Input";
 import { TripPermissionsFields } from "@/components/trips/TripPermissionsFields";
@@ -15,6 +15,8 @@ import { cn } from "@/lib/utils";
 import { trackAnalyticsEvent } from "@/lib/analytics/sink";
 
 interface TripFormProps {
+  submitLabel?: string;
+  submitting?: boolean;
   onSubmit: (data: TripFormData) => void;
   onCancel: () => void;
   initialData?: Partial<TripFormData>;
@@ -24,7 +26,6 @@ interface TripFormProps {
   currentUserName?: string | null;
   /** The user's saved contacts, offered as one-click members. */
   contacts?: Contact[];
-  submitLabel?: string;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -43,8 +44,8 @@ export function TripForm({
   currentUserName,
   contacts = [],
   submitLabel = "Create Trip",
+  submitting = false,
 }: TripFormProps) {
-  const [submitting, setSubmitting] = useState(false);
   const [name, setName] = useState(initialData?.name ?? "");
   const [description, setDescription] = useState(initialData?.description ?? "");
   const [startsOn, setStartsOn] = useState(initialData?.startsOn ?? "");

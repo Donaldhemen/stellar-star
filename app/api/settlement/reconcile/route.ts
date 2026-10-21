@@ -14,7 +14,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { StrKey } from "@stellar/stellar-sdk";
 import { CONTRACT_ID } from "@/lib/utils/constants";
-import { verifyWalletSession, createServerClientForToken } from "@/lib/supabase/serverAuth";
+import { verifyWalletSession } from "@/lib/supabase/serverAuth";
+import { createServerClientForToken } from "@/lib/supabase/server";
 import {
   HorizonVerificationError,
   verifyPaymentByHash,

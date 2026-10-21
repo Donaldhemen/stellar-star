@@ -74,6 +74,9 @@ const nextConfig = {
   webpack: (config, { webpack }) => {
     config.plugins.push(
       new webpack.DefinePlugin({
+        "process.env.NEXT_PUBLIC_RECEIPT_OCR_ENABLED": JSON.stringify(
+          process.env.NEXT_PUBLIC_RECEIPT_OCR_ENABLED ?? "true",
+        ),
         "process.env.NEXT_PUBLIC_E2E_TEST_MODE": JSON.stringify(
           process.env.NEXT_PUBLIC_E2E_TEST_MODE ?? "false",
         ),
