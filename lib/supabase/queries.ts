@@ -8,7 +8,7 @@
 
 import type { PostgrestError } from "@supabase/supabase-js";
 import type { Expense, Member, SplitShare } from "@/types/expense";
-import type { Trip, TripTemplate } from "@/types/trip";
+import type { Trip, TripPermission, TripRole, TripTemplate } from "@/types/trip";
 import { normalizeWorkspace } from "@/types/workspace";
 import type {
   ExpenseInsert,
@@ -1362,6 +1362,64 @@ export async function updateTripRow(
   return rowToTrip(unwrap(result, "update this trip") as TripRow);
 }
 
+export async function setTripMemberRole(
+  tripId: string,
+  memberId: string,
+  role: TripRole,
+  customPermissions: TripPermission[] = [],
+  client: StellarStarClient = requireAuthenticatedClient(),
+): Promise<Trip> {
+  const result = await client.rpc("set_trip_member_role", {
+    p_trip_id: tripId,
+    p_member_id: memberId,
+    p_role: role,
+    p_custom_permissions: customPermissions,
+  });
+  if (result.error) throw toDatabaseError(result.error, "change this member's role");
+  if (!result.data) throw new DatabaseError("No trip was returned after changing the member's role.");
+  return rowToTrip(result.data as TripRow);
+}
+
+export async function transferTripOwnership(
+  tripId: string,
+  newOwnerMemberId: string,
+  client: StellarStarClient = requireAuthenticatedClient(),
+): Promise<Trip> {
+  const result = await client.rpc("transfer_trip_ownership", {
+    p_trip_id: tripId,
+    p_new_owner_member_id: newOwnerMemberId,
+  });
+  if (result.error) throw toDatabaseError(result.error, "transfer trip ownership");
+  if (!result.data) throw new DatabaseError("No trip was returned after transferring ownership.");
+  return rowToTrip(result.data as TripRow);
+}
+
+export async function hasTripPermission(
+  tripId: string,
+  permission: TripPermission,
+  client: StellarStarClient = requireAuthenticatedClient(),
+): Promise<boolean> {
+  const result = await client.rpc("trip_has_permission", {
+    p_trip_id: tripId,
+    p_permission: permission,
+  });
+  if (result.error) throw toDatabaseError(result.error, "check trip permissions");
+  return result.data === true;
+}
+
+export async function hasExpensePermission(
+  expenseId: string,
+  permission: TripPermission,
+  client: StellarStarClient = requireAuthenticatedClient(),
+): Promise<boolean> {
+  const result = await client.rpc("expense_has_permission", {
+    p_expense_id: expenseId,
+    p_permission: permission,
+  });
+  if (result.error) throw toDatabaseError(result.error, "check expense permissions");
+  return result.data === true;
+}
+
 export async function deleteTripRow(
   id: string,
   client: StellarStarClient = requireAuthenticatedClient()
@@ -1373,36 +1431,19 @@ export async function deleteTripRow(
 /**
  * Attaches an expense to a trip.
  *
- * Reads the current array first and skips the write when the id is already
- * present, so re-adding the same expense is a no-op rather than a duplicate.
+ * The database RPC serializes the update and checks expense permission, so a
+ * client cannot link an expense by editing the trip row directly.
  */
 export async function addExpenseIdToTrip(
   tripId: string,
   expenseId: string,
   client: StellarStarClient = requireAuthenticatedClient()
 ): Promise<string[]> {
-  const { data, error } = await client
-    .from("trips")
-    .select("expense_ids")
-    .eq("id", tripId)
-    .maybeSingle();
-
-  if (error) throw toDatabaseError(error, "add this expense to the trip");
-  if (!data) throw new DatabaseError("That trip no longer exists.");
-
-  const currentIds = data.expense_ids ?? [];
-  if (currentIds.includes(expenseId)) return currentIds;
-
-  const expenseIds = [...currentIds, expenseId];
-  const result = await client
-    .from("trips")
-    .update({ expense_ids: expenseIds })
-    .eq("id", tripId)
-    .select("expense_ids")
-    .single();
-
-  const updated = unwrap(result, "add this expense to the trip");
-  return updated.expense_ids ?? expenseIds;
+  const result = await client.rpc("add_expense_to_trip", {
+    p_trip_id: tripId,
+    p_expense_id: expenseId,
+  });
+  return unwrap(result, "add this expense to the trip");
 }
 
 /**
@@ -1611,5 +1652,3 @@ export {
   type CreateInviteResult,
   type ClaimInviteResult,
 } from "@/lib/invitations/claim";
-
-
