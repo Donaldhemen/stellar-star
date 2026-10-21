@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useCallback, useContext, useMemo } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { Trip } from "@/types/trip";
 import { LS_TRIPS } from "@/lib/utils/constants";
 import {
@@ -17,6 +17,7 @@ import { useRealtimeCollection } from "@/lib/supabase/useRealtimeCollection";
 import { invalidateQueryCaches } from "@/lib/supabase/cacheInvalidation";
 import { useWalletContext } from "./WalletContext";
 import type { TripCopyRequest } from "@/lib/trip/templates";
+import { cancelTripWatcher, cancelAllTripWatchers } from "@/hooks/useContractEvents";
 
 interface TripContextType {
   trips: Trip[];
@@ -28,6 +29,9 @@ interface TripContextType {
   addExpenseToTrip: (tripId: string, expenseId: string) => Promise<void>;
   settleTrip: (id: string) => Promise<void>;
   getTrip: (id: string) => Trip | undefined;
+  activeTripId: string | null;
+  setActiveTripId: (id: string | null) => void;
+  isTripActive: (id: string) => boolean;
   isLoading: boolean;
   isOffline: boolean;
   error: string | null;
@@ -42,6 +46,7 @@ const getTripId = (trip: Trip) => trip.id;
 
 export function TripProvider({ children }: { children: React.ReactNode }) {
   const { publicKey } = useWalletContext();
+  const [activeTripId, setActiveTripId] = useState<string | null>(null);
 
   const { items: trips, isLoading, isOffline, error, needsSetup, refresh, mutate, wallet } =
     useRealtimeCollection<Trip>({
@@ -52,6 +57,36 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
       getId: getTripId,
       connectedWallet: publicKey,
     });
+
+  const handleSetActiveTripId = useCallback((id: string | null) => {
+    setActiveTripId((prev) => {
+      if (prev && prev !== id) {
+        // Cancel stale polls for the previous trip before activating the new one
+        cancelTripWatcher(prev);
+      }
+      return id;
+    });
+  }, []);
+
+  const isTripActive = useCallback(
+    (id: string): boolean => {
+      if (!id) return false;
+      if (activeTripId !== null && activeTripId !== id) return false;
+      const trip = trips.find((t) => t.id === id);
+      if (trip) {
+        return !trip.settled;
+      }
+      return activeTripId === id;
+    },
+    [activeTripId, trips]
+  );
+
+  // Cancel all stale trip watchers and background polls when wallet changes or disconnects
+  useEffect(() => {
+    if (!wallet) {
+      cancelAllTripWatchers();
+    }
+  }, [wallet]);
 
   /**
    * Writes go to the database first, then update local state from the row the
@@ -121,6 +156,10 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
 
   const deleteTrip = useCallback(
     async (id: string) => {
+      cancelTripWatcher(id);
+      if (activeTripId === id) {
+        setActiveTripId(null);
+      }
       await deleteTripRow(id);
       mutate((previous) => previous.filter((t) => t.id !== id));
       if (wallet) {
@@ -131,7 +170,7 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
         });
       }
     },
-    [mutate, wallet]
+    [activeTripId, mutate, wallet]
   );
 
   const addExpenseToTrip = useCallback(
@@ -152,6 +191,7 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
 
   const settleTrip = useCallback(
     async (id: string) => {
+      cancelTripWatcher(id);
       const saved = await updateTripRow(id, { settled: true });
       mutate((previous) => previous.map((t) => (t.id === id ? saved : t)));
       if (wallet) {
@@ -170,6 +210,9 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<TripContextType>(
     () => ({
       trips,
+      activeTripId,
+      setActiveTripId: handleSetActiveTripId,
+      isTripActive,
       addTrip,
       copyTrip,
       updateTrip,
@@ -185,6 +228,9 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
     }),
     [
       trips,
+      activeTripId,
+      handleSetActiveTripId,
+      isTripActive,
       addTrip,
       copyTrip,
       updateTrip,

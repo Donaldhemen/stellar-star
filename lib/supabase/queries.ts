@@ -8,7 +8,8 @@
 
 import type { PostgrestError } from "@supabase/supabase-js";
 import type { Expense, Member, SplitShare } from "@/types/expense";
-import type { Trip, TripTemplate } from "@/types/trip";
+import type { Trip, TripPermission, TripRole, TripTemplate } from "@/types/trip";
+import { normalizeWorkspace } from "@/types/workspace";
 import type {
   ExpenseInsert,
   ExpenseRow,
@@ -31,6 +32,11 @@ import {
   type ConflictDetails,
 } from "@/lib/expense/conflictResolver";
 import type { QueryCacheDomain } from "./cacheInvalidation";
+import { normalizeTags } from "@/lib/expense/tags";
+import { normalizeCategory } from "@/lib/expense/categories";
+import { searchTerms, dateRangeBounds, encodeHistoryCursor, type ExpenseHistoryFilters, type HistoryCursor } from "@/lib/expense/historyFilters";
+import { applyInstallment, markInstallmentProof, type NewInstallment } from "@/lib/settlement/installments";
+import { Money } from "@/lib/money";
 import {
   normalizePermissions,
   normalizeRecurringRules,
@@ -40,6 +46,10 @@ import {
 } from "@/lib/trip/templates";
 
 export { ExpenseConflictError, type ConflictDetails };
+
+export function cacheDomainsForMutation(mutation: "trip_write" | "trip_members_write" | "trip_expense_link" | "expense_write"): QueryCacheDomain[] {
+  return mutation === "trip_write" ? ["trips"] : ["trips", "expenses"];
+}
 
 // ─── Domain shapes ────────────────────────────────────────────────────────────
 
@@ -207,6 +217,8 @@ export function rowToUser(row: UserRow): UserProfile {
 
 export function rowToExpense(row: ExpenseRow): Expense {
   return {
+    category: normalizeCategory(row.category),
+    tags: normalizeTags(row.tags),
     id: row.id,
     title: row.title,
     description: row.description ?? undefined,
@@ -249,6 +261,7 @@ export function rowToTrip(row: TripRow): Trip {
     permissions: normalizePermissions(row.permissions),
     sourceTemplateId: row.source_template_id ?? undefined,
     copiedFromTripId: row.copied_from_trip_id ?? undefined,
+    workspace: normalizeWorkspace(row.workspace),
   };
 }
 
@@ -327,6 +340,8 @@ export function expenseToInsert(expense: Expense, creatorWallet: string): Expens
     id: expense.id,
     title: expense.title,
     description: expense.description ?? null,
+    category: expense.category ?? null,
+    tags: normalizeTags(expense.tags),
     total_amount: expense.totalAmount,
     currency: expense.currency ?? "XLM",
     exchange_rate: expense.exchangeRate ?? null,
@@ -391,6 +406,7 @@ export function tripToInsert(trip: Trip, creatorWallet: string): TripInsert {
     ends_on: trip.endsOn ?? null,
     recurring_rules: normalizeRecurringRules(trip.recurringRules) as unknown as Json,
     permissions: normalizePermissions(trip.permissions) as unknown as Json,
+    workspace: (trip.workspace ? normalizeWorkspace(trip.workspace) : null) as unknown as Json,
   };
 }
 
@@ -411,6 +427,9 @@ export function tripToUpdate(updates: Partial<Trip>): TripUpdate {
   if (updates.permissions !== undefined) {
     patch.permissions = normalizePermissions(updates.permissions) as unknown as Json;
   }
+  if (updates.workspace !== undefined) {
+    patch.workspace = normalizeWorkspace(updates.workspace) as unknown as Json;
+  }
   return patch;
 }
 
@@ -420,9 +439,9 @@ export function tripToUpdate(updates: Partial<Trip>): TripUpdate {
 
 const USER_COLUMNS = "id, wallet_address, display_name, created_at, updated_at, last_login_at";
 const EXPENSE_COLUMNS =
-  "id, title, description, total_amount, currency, exchange_rate, exchange_rate_timestamp, exchange_rate_source, entered_amount, settlement_asset, split_mode, paid_by_member_id, members, shares, settled, created_by_wallet, member_wallets, created_at, updated_at";
+  "id, title, description, category, tags, total_amount, currency, exchange_rate, exchange_rate_timestamp, exchange_rate_source, entered_amount, settlement_asset, split_mode, paid_by_member_id, members, shares, settled, created_by_wallet, member_wallets, created_at, updated_at";
 const TRIP_COLUMNS =
-  "id, name, description, members, expense_ids, settled, created_by_wallet, member_wallets, starts_on, ends_on, recurring_rules, permissions, source_template_id, copied_from_trip_id, created_at, updated_at";
+  "id, name, description, members, expense_ids, settled, created_by_wallet, member_wallets, starts_on, ends_on, recurring_rules, permissions, source_template_id, copied_from_trip_id, workspace, created_at, updated_at";
 const TRIP_TEMPLATE_COLUMNS =
   "id, owner_wallet, name, description, members, recurring_rules, permissions, duration_days, source_trip_id, created_at, updated_at";
 const SETTLEMENT_INTENT_COLUMNS =
@@ -888,6 +907,169 @@ export async function markSharePaidRow(
   return rowToExpense(result.data as ExpenseRow);
 }
 
+/** SQLSTATE raised by `record_share_installment` for an overpayment. */
+const PG_CHECK_VIOLATION = "23514";
+
+/** Raised when an installment would push a share past what it owes (#325). */
+export class InstallmentRejectedError extends DatabaseError {
+  constructor(
+    message: string,
+    readonly reason: "OVERPAYMENT" | "ALREADY_SETTLED" | "NON_POSITIVE",
+    cause?: unknown,
+  ) {
+    super(message, PG_CHECK_VIOLATION, cause);
+    this.name = "InstallmentRejectedError";
+  }
+}
+
+function installmentPayload(installment: NewInstallment): Json {
+  const payload: Record<string, Json> = {
+    seq: installment.seq,
+    amount: installment.amount,
+    txHash: installment.txHash.trim().toLowerCase(),
+    claimId: installment.claimId,
+    ledger: installment.ledger ?? null,
+    attestationNonce: installment.attestationNonce ?? null,
+    verified: installment.verified ?? false,
+    onChain: installment.onChain ?? false,
+    paidAt: installment.paidAt ?? new Date().toISOString(),
+  };
+  return payload;
+}
+
+/**
+ * Appends one installment to a member's share (#325).
+ *
+ * Goes through the `record_share_installment` RPC, which locks the expense row
+ * and re-checks the remaining balance in integer stroops, so two installments
+ * racing for the same balance cannot both land. If the RPC is not deployed
+ * (migration 0012 not applied) it falls back to a compare-and-swap write on
+ * `updated_at` using the same pure rules from lib/settlement/installments.ts.
+ *
+ * Idempotent on the transaction hash: recording a payment that is already on
+ * the share returns the expense unchanged.
+ */
+export async function recordShareInstallmentRow(
+  expenseId: string,
+  memberId: string,
+  installment: NewInstallment,
+  client: StellarStarClient = requireAuthenticatedClient()
+): Promise<Expense> {
+  const amountStroops = Money.parse(installment.amount).toStroops().toString();
+  const payload = { ...(installmentPayload(installment) as Record<string, Json>), amountStroops };
+
+  const { data: rpcData, error: rpcError } = await client.rpc("record_share_installment", {
+    p_expense_id: expenseId,
+    p_member_id: memberId,
+    p_installment: payload as Json,
+  });
+
+  if (!rpcError && Array.isArray(rpcData) && rpcData.length > 0) {
+    return rowToExpense(rpcData[0] as ExpenseRow);
+  }
+  if (rpcError && rpcError.code === PG_CHECK_VIOLATION) {
+    const reason = /already fully settled/i.test(rpcError.message)
+      ? "ALREADY_SETTLED"
+      : /greater than zero/i.test(rpcError.message)
+        ? "NON_POSITIVE"
+        : "OVERPAYMENT";
+    throw new InstallmentRejectedError(rpcError.message, reason, rpcError);
+  }
+  if (rpcError && rpcError.code !== PG_FUNCTION_MISSING) {
+    throw toDatabaseError(rpcError, "record this installment");
+  }
+
+  // Fallback: optimistic compare-and-swap, retried a few times under contention.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { data: fresh, error: fetchError } = await client
+      .from("expenses")
+      .select("shares, updated_at")
+      .eq("id", expenseId)
+      .maybeSingle();
+
+    if (fetchError) throw toDatabaseError(fetchError, "record this installment");
+    if (!fresh) {
+      throw new DatabaseError(
+        "Payment sent on Stellar, but the expense could not be found. Make sure your wallet address is listed on this expense."
+      );
+    }
+
+    const shares = (fresh.shares ?? []) as unknown as SplitShare[];
+    const target = shares.find((share) => share.memberId === memberId);
+    if (!target) throw new DatabaseError("That share is not on this expense.");
+
+    const applied = applyInstallment(target, installment);
+    if (!applied.ok) throw new InstallmentRejectedError(applied.message, applied.code);
+    if (applied.duplicate) {
+      const { data: row, error } = await client
+        .from("expenses")
+        .select(EXPENSE_COLUMNS)
+        .eq("id", expenseId)
+        .single();
+      if (error) throw toDatabaseError(error, "record this installment");
+      return rowToExpense(row as ExpenseRow);
+    }
+
+    const nextShares = shares.map((share) => (share.memberId === memberId ? applied.share : share));
+    const settled = nextShares.length > 0 && nextShares.every((share) => share.paid);
+
+    const result = await client
+      .from("expenses")
+      .update({ shares: nextShares as unknown as ExpenseUpdate["shares"], settled })
+      .eq("id", expenseId)
+      .eq("updated_at", fresh.updated_at)
+      .select(EXPENSE_COLUMNS)
+      .maybeSingle();
+
+    if (result.error) throw toDatabaseError(result.error, "record this installment");
+    if (result.data) return rowToExpense(result.data as ExpenseRow);
+    // Another writer changed the row between read and write: re-read and retry.
+  }
+
+  throw new DatabaseError(
+    "Payment sent on Stellar, but the installment could not be recorded because the expense kept changing. Reload to reconcile it."
+  );
+}
+
+/**
+ * Stamps proof onto an installment that is already recorded: the attestation
+ * nonce and the contract record. Metadata only — amounts and the share's
+ * `paid` flag are never touched here, so a stale write cannot unsettle money.
+ */
+export async function updateInstallmentProofRow(
+  expenseId: string,
+  memberId: string,
+  txHash: string,
+  proof: { verified?: boolean; onChain?: boolean; attestationNonce?: string | null; ledger?: number | null },
+  client: StellarStarClient = requireAuthenticatedClient()
+): Promise<Expense | null> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { data: fresh, error: fetchError } = await client
+      .from("expenses")
+      .select("shares, updated_at")
+      .eq("id", expenseId)
+      .maybeSingle();
+    if (fetchError) throw toDatabaseError(fetchError, "update installment proof");
+    if (!fresh) return null;
+
+    const shares = (fresh.shares ?? []) as unknown as SplitShare[];
+    const nextShares = shares.map((share) =>
+      share.memberId === memberId ? markInstallmentProof(share, txHash, proof) : share
+    );
+
+    const result = await client
+      .from("expenses")
+      .update({ shares: nextShares as unknown as ExpenseUpdate["shares"] })
+      .eq("id", expenseId)
+      .eq("updated_at", fresh.updated_at)
+      .select(EXPENSE_COLUMNS)
+      .maybeSingle();
+    if (result.error) throw toDatabaseError(result.error, "update installment proof");
+    if (result.data) return rowToExpense(result.data as ExpenseRow);
+  }
+  return null;
+}
+
 /**
  * Marks multiple expense shares as paid atomically for a net settlement.
  */
@@ -1191,6 +1373,64 @@ export async function updateTripRow(
   return rowToTrip(unwrap(result, "update this trip") as TripRow);
 }
 
+export async function setTripMemberRole(
+  tripId: string,
+  memberId: string,
+  role: TripRole,
+  customPermissions: TripPermission[] = [],
+  client: StellarStarClient = requireAuthenticatedClient(),
+): Promise<Trip> {
+  const result = await client.rpc("set_trip_member_role", {
+    p_trip_id: tripId,
+    p_member_id: memberId,
+    p_role: role,
+    p_custom_permissions: customPermissions,
+  });
+  if (result.error) throw toDatabaseError(result.error, "change this member's role");
+  if (!result.data) throw new DatabaseError("No trip was returned after changing the member's role.");
+  return rowToTrip(result.data as TripRow);
+}
+
+export async function transferTripOwnership(
+  tripId: string,
+  newOwnerMemberId: string,
+  client: StellarStarClient = requireAuthenticatedClient(),
+): Promise<Trip> {
+  const result = await client.rpc("transfer_trip_ownership", {
+    p_trip_id: tripId,
+    p_new_owner_member_id: newOwnerMemberId,
+  });
+  if (result.error) throw toDatabaseError(result.error, "transfer trip ownership");
+  if (!result.data) throw new DatabaseError("No trip was returned after transferring ownership.");
+  return rowToTrip(result.data as TripRow);
+}
+
+export async function hasTripPermission(
+  tripId: string,
+  permission: TripPermission,
+  client: StellarStarClient = requireAuthenticatedClient(),
+): Promise<boolean> {
+  const result = await client.rpc("trip_has_permission", {
+    p_trip_id: tripId,
+    p_permission: permission,
+  });
+  if (result.error) throw toDatabaseError(result.error, "check trip permissions");
+  return result.data === true;
+}
+
+export async function hasExpensePermission(
+  expenseId: string,
+  permission: TripPermission,
+  client: StellarStarClient = requireAuthenticatedClient(),
+): Promise<boolean> {
+  const result = await client.rpc("expense_has_permission", {
+    p_expense_id: expenseId,
+    p_permission: permission,
+  });
+  if (result.error) throw toDatabaseError(result.error, "check expense permissions");
+  return result.data === true;
+}
+
 export async function deleteTripRow(
   id: string,
   client: StellarStarClient = requireAuthenticatedClient()
@@ -1202,36 +1442,19 @@ export async function deleteTripRow(
 /**
  * Attaches an expense to a trip.
  *
- * Reads the current array first and skips the write when the id is already
- * present, so re-adding the same expense is a no-op rather than a duplicate.
+ * The database RPC serializes the update and checks expense permission, so a
+ * client cannot link an expense by editing the trip row directly.
  */
 export async function addExpenseIdToTrip(
   tripId: string,
   expenseId: string,
   client: StellarStarClient = requireAuthenticatedClient()
 ): Promise<string[]> {
-  const { data, error } = await client
-    .from("trips")
-    .select("expense_ids")
-    .eq("id", tripId)
-    .maybeSingle();
-
-  if (error) throw toDatabaseError(error, "add this expense to the trip");
-  if (!data) throw new DatabaseError("That trip no longer exists.");
-
-  const currentIds = data.expense_ids ?? [];
-  if (currentIds.includes(expenseId)) return currentIds;
-
-  const expenseIds = [...currentIds, expenseId];
-  const result = await client
-    .from("trips")
-    .update({ expense_ids: expenseIds })
-    .eq("id", tripId)
-    .select("expense_ids")
-    .single();
-
-  const updated = unwrap(result, "add this expense to the trip");
-  return updated.expense_ids ?? expenseIds;
+  const result = await client.rpc("add_expense_to_trip", {
+    p_trip_id: tripId,
+    p_expense_id: expenseId,
+  });
+  return unwrap(result, "add this expense to the trip");
 }
 
 /**
@@ -1440,5 +1663,3 @@ export {
   type CreateInviteResult,
   type ClaimInviteResult,
 } from "@/lib/invitations/claim";
-
-

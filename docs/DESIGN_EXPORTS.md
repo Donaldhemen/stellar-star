@@ -11,8 +11,9 @@ exports every trip.
 
 ## CSV
 
-One `expense` row per expense, one `share` row per share, and an `adjustment` row for
-every share marked paid without an on-chain transaction. Columns include category,
+One `expense` row per expense, one `share` row per share, one `installment` row per
+partial payment towards a share (#325, each with its own transaction hash), and an
+`adjustment` row for every share marked paid without an on-chain transaction. Columns include category,
 entered amount and currency, exchange rate, source and timestamp, settlement asset,
 transaction hash and explorer URL (`CSV_HEADER`). Text cells starting with `= + - @`
 are prefixed with `'` so spreadsheets do not run them as formulas.
