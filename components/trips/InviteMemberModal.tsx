@@ -6,6 +6,7 @@ import { useToast } from "@/components/ui/Toast";
 import { useSession } from "@/lib/supabase/useSession";
 import { QRCodeSVG } from "qrcode.react";
 import type { Trip } from "@/types/trip";
+import type { Member } from "@/types/expense";
 
 interface InviteMemberModalProps {
   trip: Trip;
@@ -52,20 +53,13 @@ export function InviteMemberModal({ trip, isOpen, onClose }: InviteMemberModalPr
 
   useEffect(() => {
     if (!isOpen) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose]);
-
     setSelectedMemberId((current) => {
       // "" is the General Group Invite option, always valid.
       if (current === "") return current;
       if (unclaimedMembers.some((m) => m.id === current)) return current;
       return unclaimedMembers.length > 0 ? unclaimedMembers[0].id : "";
     });
-  }, [isOpen, unclaimedKey, unclaimedMembers]);
+  }, [isOpen, unclaimedMembers]);
 
   const handleGenerate = async () => {
     setLoading(true);
@@ -106,6 +100,8 @@ export function InviteMemberModal({ trip, isOpen, onClose }: InviteMemberModalPr
     setTimeout(() => setCopied(false), 2000);
   };
 
+  if (!isOpen) return null;
+
   return (
     <div
       role="dialog"
@@ -124,6 +120,11 @@ export function InviteMemberModal({ trip, isOpen, onClose }: InviteMemberModalPr
             aria-label="Close dialog"
             className="p-1 rounded-lg text-[#888] hover:text-[#0F0F14] hover:bg-[#F5F5F5] transition-colors"
           >
+            <X size={18} />
+          </button>
+        </div>
+        <div className="space-y-4 p-4">
+          <label htmlFor="invite-member-slot" className="block text-sm font-semibold">
             Select Member Slot to Invite
           </label>
           {unclaimedMembers.length > 0 ? (
@@ -147,6 +148,7 @@ export function InviteMemberModal({ trip, isOpen, onClose }: InviteMemberModalPr
           )}
         </div>
 
+        <div className="p-4">
         {!generatedUrl ? (
             <button
               onClick={handleGenerate}
@@ -219,7 +221,8 @@ export function InviteMemberModal({ trip, isOpen, onClose }: InviteMemberModalPr
               </p>
             </div>
         )}
+        </div>
       </div>
-    </Modal>
+    </div>
   );
 }

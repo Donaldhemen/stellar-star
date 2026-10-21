@@ -15,6 +15,7 @@ import { server } from "./client";
 import { signXDR } from "@/lib/freighter";
 import {
   SOROBAN_RPC_URL,
+  HORIZON_URL,
   CONTRACT_ID,
   SETTLEMENT_ASSET_ID,
   NETWORK_PASSPHRASE,
@@ -210,7 +211,7 @@ async function submitAndPoll(
   if (sendResult.status === "ERROR") {
     throw new Error(
       `Contract send failed: ${
-        sendResult.errorResult?.result()?.toXDR("base64") ?? "unknown error"
+        sendResult.errorResult?.result?.toXDR("base64") ?? "unknown error"
       }`,
     );
   }

@@ -4,7 +4,8 @@ import React, { useState } from "react";
 import { Plus, Trash2, UserPlus } from "lucide-react";
 import type { Member } from "@/types/expense";
 import type { Contact } from "@/types/contact";
-import type { TripFormData } from "@/types/trip";
+import type { TripFormData, TripPermissions, RecurringExpenseRule } from "@/types/trip";
+import { normalizePermissions, normalizeRecurringRules, validateTripDraft } from "@/lib/trip/templates";
 import { Input } from "@/components/ui/Input";
 import { TripPermissionsFields } from "@/components/trips/TripPermissionsFields";
 import { TripRecurringRulesEditor } from "@/components/trips/TripRecurringRulesEditor";
@@ -13,6 +14,8 @@ import { canonicalWallet, contactToMember, walletTrust } from "@/lib/contacts/co
 import { cn } from "@/lib/utils";
 
 interface TripFormProps {
+  submitLabel?: string;
+  submitting?: boolean;
   onSubmit: (data: TripFormData) => void;
   onCancel: () => void;
   initialData?: Partial<TripFormData>;
@@ -39,6 +42,8 @@ export function TripForm({
   currentUserPublicKey,
   currentUserName,
   contacts = [],
+  submitLabel = "Create Trip",
+  submitting = false,
 }: TripFormProps) {
   const [name, setName] = useState(initialData?.name ?? "");
   const [description, setDescription] = useState(initialData?.description ?? "");

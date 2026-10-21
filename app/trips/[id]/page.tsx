@@ -17,6 +17,13 @@ import { TripPaymentProgressBanner } from "@/components/trips/TripPaymentProgres
 import { TripTabs, type TripTab } from "@/components/trips/TripTabs";
 import { InviteMemberModal } from "@/components/trips/InviteMemberModal";
 import { TripExportMenu } from "@/components/export/TripExportMenu";
+import { TripRecurringRules } from "@/components/trips/TripRecurringRules";
+import { TripWalletChangeBanner } from "@/components/trips/TripWalletChangeBanner";
+import { RecurringPanel } from "@/components/recurring/RecurringPanel";
+import { SaveTripTemplateForm } from "@/components/trips/SaveTripTemplateForm";
+import { DuplicateTripFlow } from "@/components/trips/TripCopyFlow";
+import { canPerformTripAction } from "@/lib/trip/templates";
+import type { RecurringExpenseRule } from "@/types/trip";
 import { useAuth } from "@/context/AuthContext";
 import { useContractEvents } from "@/hooks/useContractEvents";
 import { useExpense } from "@/hooks/useExpense";

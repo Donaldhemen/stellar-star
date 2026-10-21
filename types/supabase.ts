@@ -32,6 +32,8 @@ export type UserRow = {
 };
 
 export type ExpenseRow = {
+  category?: string | null;
+  tags?: string[];
   id: string;
   title: string;
   description: string | null;
@@ -75,6 +77,29 @@ export type TripRow = {
   copied_from_trip_id: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type TripTemplateRow = {
+  id: string; owner_wallet: string; name: string; description: string | null;
+  members: Json; recurring_rules: Json; permissions: Json; duration_days: number | null;
+  source_trip_id: string | null; created_at: string; updated_at: string;
+};
+export type TripCopyEventRow = {
+  id: string; idempotency_key: string; operation: "trip_to_template" | "template_to_trip" | "trip_to_trip";
+  actor_wallet: string; source_kind: "template" | "trip"; source_id: string;
+  target_kind: "template" | "trip"; target_id: string; summary: Json; created_at: string;
+};
+export type TripTemplateUpdate = Partial<Omit<TripTemplateRow, "id" | "owner_wallet" | "created_at" | "updated_at">>;
+export type ContactRow = {
+  id: string; owner_wallet: string; display_name: string; wallet_address: string | null;
+  wallet_verified: boolean; claimed_by_wallet: string | null; verified_at: string | null;
+  invite_destination: string | null; invite_channel: "email" | "phone" | "other" | null;
+  claim_token_hash: string | null; claim_expires_at: string | null; created_at: string; updated_at: string;
+};
+export type ContactWalletChangeRow = {
+  id: string; contact_id: string; owner_wallet: string; contact_name: string;
+  old_wallet: string | null; new_wallet: string; status: "pending_notice" | "applied" | "cancelled";
+  affected_trip_ids: string[]; notice_until: string; verified: boolean; created_at: string; applied_at: string | null;
 };
 
 export type ExportAuditEventRow = {
@@ -596,6 +621,20 @@ export type Database = {
     };
     Views: { [_ in never]: never };
     Functions: {
+      search_expenses: {
+        Args: { p_trip_id: string | null; p_terms: string[] | null; p_category: string | null;
+          p_tags: string[] | null; p_payer: string | null; p_status: string | null; p_asset: string | null;
+          p_from: string | null; p_to: string | null; p_cursor_created_at: string | null; p_cursor_id: string | null; p_limit: number };
+        Returns: ExpenseRow[];
+      };
+      save_trip_template: {
+        Args: { p_idempotency_key: string; p_source_trip_id: string; p_template: Json };
+        Returns: TripTemplateRow[];
+      };
+      create_trip_from_copy: {
+        Args: { p_idempotency_key: string; p_source_kind: string; p_source_id: string; p_trip: Json };
+        Returns: TripRow[];
+      };
       current_wallet: {
         Args: Record<string, never>;
         Returns: string;

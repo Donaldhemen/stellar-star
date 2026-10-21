@@ -100,7 +100,7 @@ export function isOracleConfigured(): boolean {
 export function signClaimMessage(message: Buffer): { signature: string; publicKey: string } {
   const keypair = loadOracleKeypair();
   return {
-    signature: keypair.sign(message).toString("hex"),
+    signature: Buffer.from(keypair.sign(message)).toString("hex"),
     publicKey: keypair.publicKey(),
   };
 }
@@ -110,5 +110,5 @@ export function signClaimMessage(message: Buffer): { signature: string; publicKe
  * `init` and `set_oracle_key` take as `BytesN<32>`.
  */
 export function oracleRawPublicKeyHex(): string {
-  return loadOracleKeypair().rawPublicKey().toString("hex");
+  return Buffer.from(loadOracleKeypair().rawPublicKey()).toString("hex");
 }
