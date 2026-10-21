@@ -169,7 +169,7 @@ export function useAccountOnboarding(asset: AssetRef = NATIVE_ASSET) {
       setState((s) => ({ ...s, phase: "awaiting_signature" }));
 
       try {
-        const signed = await signXDR(body.xdr, NETWORK_PASSPHRASE);
+        const signed = await signXDR(body.xdr, NETWORK_PASSPHRASE, invitee);
 
         setState((s) => ({ ...s, phase: "submitting" }));
         const result = await submitSignedTransaction(signed);

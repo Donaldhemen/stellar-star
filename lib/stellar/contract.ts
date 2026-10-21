@@ -604,7 +604,7 @@ export async function depositPoolBalance(
     const assembled = rpc.assembleTransaction(tx, simResult).build();
 
     onStatus?.("signing");
-    const signedXdr = await signXDR(assembled.toXDR(), NETWORK_PASSPHRASE);
+    const signedXdr = await signXDR(assembled.toXDR(), NETWORK_PASSPHRASE, memberPublicKey);
 
     const { ledger } = await submitAndPoll(signedXdr, onStatus);
     return { success: true, ledger };
@@ -677,7 +677,7 @@ export async function recordPaymentOnChain(
     const assembled = rpc.assembleTransaction(tx, simResult).build();
 
     onStatus?.("signing");
-    const signedXdr = await signXDR(assembled.toXDR(), NETWORK_PASSPHRASE);
+    const signedXdr = await signXDR(assembled.toXDR(), NETWORK_PASSPHRASE, memberPublicKey);
 
     const { ledger } = await submitAndPoll(signedXdr, onStatus);
     return { success: true, ledger };
@@ -771,7 +771,7 @@ export async function recordNetSettlementOnChain(
     const assembled = rpc.assembleTransaction(tx, simResult).build();
 
     onStatus?.("signing");
-    const signedXdr = await signXDR(assembled.toXDR(), NETWORK_PASSPHRASE);
+    const signedXdr = await signXDR(assembled.toXDR(), NETWORK_PASSPHRASE, memberPublicKey);
 
     const { ledger } = await submitAndPoll(signedXdr, onStatus);
     return { success: true, ledger };
