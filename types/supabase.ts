@@ -350,6 +350,34 @@ export type SchemaMigrationRow = {
   checksum: string;
 };
 
+export type SupportAuditLogRow = {
+  id: string;
+  staff_identifier: string;
+  query_type: string;
+  query_value: string;
+  results_count: number;
+  ip_address: string;
+  user_agent: string | null;
+  created_at: string;
+};
+
+export type SupportCorrectiveActionRow = {
+  id: string;
+  action_type: string;
+  target_id: string;
+  target_type: string;
+  ticket_ref: string;
+  reason: string;
+  details: Json;
+  proposed_by: string;
+  proposed_at: string;
+  approved_by: string | null;
+  approved_at: string | null;
+  status: "pending_approval" | "approved" | "executed" | "rejected" | "expired";
+  execution_result: Json | null;
+  created_at: string;
+};
+
 export type IdempotencyRecordRow = {
   key: string;
   wallet_address: string;
@@ -691,6 +719,25 @@ export type Database = {
           created_at?: string;
         };
         Update: Partial<AuthChallengeRow>;
+        Relationships: [];
+      };
+
+      support_audit_logs: {
+        Row: SupportAuditLogRow;
+        Insert: Omit<SupportAuditLogRow, "id" | "created_at"> & {
+          id?: string;
+          created_at?: string;
+        };
+        Update: Partial<SupportAuditLogRow>;
+        Relationships: [];
+      };
+      support_corrective_actions: {
+        Row: SupportCorrectiveActionRow;
+        Insert: Omit<SupportCorrectiveActionRow, "id" | "created_at"> & {
+          id?: string;
+          created_at?: string;
+        };
+        Update: Partial<SupportCorrectiveActionRow>;
         Relationships: [];
       };
       auth_rate_limits: {
