@@ -142,6 +142,18 @@ export type SettlementProposalResponseRow = {
   created_at: string;
 };
 
+export type ExpenseDisputeRow = {
+  id: string; trip_id: string; expense_id: string; share_member_id: string;
+  opened_by_wallet: string; category: "incorrect_amount" | "incorrect_split" | "not_shared" | "duplicate" | "already_paid" | "missing_context" | "other"; comment: string; evidence_receipt_ids: string[];
+  status: "open" | "upheld" | "resolved"; created_at: string; resolved_at: string | null;
+};
+
+export type ExpenseDisputeEventRow = {
+  id: string; dispute_id: string; actor_wallet: string;
+  action: "opened" | "upheld" | "dismissed" | "adjusted";
+  reason: string; created_at: string;
+};
+
 export type TripRoleAuditRow = {
   id: string;
   trip_id: string;
@@ -511,6 +523,18 @@ export type Database = {
         Update: Record<string, never>;
         Relationships: [];
       };
+      expense_disputes: {
+        Row: ExpenseDisputeRow;
+        Insert: Pick<ExpenseDisputeRow, "trip_id" | "expense_id" | "share_member_id" | "opened_by_wallet" | "category" | "comment" | "evidence_receipt_ids">;
+        Update: Partial<Pick<ExpenseDisputeRow, "status" | "resolved_at">>;
+        Relationships: [];
+      };
+      expense_dispute_events: {
+        Row: ExpenseDisputeEventRow;
+        Insert: Omit<ExpenseDisputeEventRow, "id" | "created_at">;
+        Update: Record<string, never>;
+        Relationships: [];
+      };
       export_audit_events: {
         Row: ExportAuditEventRow;
         Insert: Pick<ExportAuditEventRow, "actor_wallet" | "export_kind" | "status"> &
@@ -708,6 +732,10 @@ export type Database = {
     };
     Views: { [_ in never]: never };
     Functions: {
+      resolve_expense_dispute: {
+        Args: { p_dispute_id: string; p_action: "upheld" | "dismissed" | "adjusted"; p_reason: string };
+        Returns: undefined;
+      };
       search_expenses: {
         Args: { p_trip_id: string | null; p_terms: string[] | null; p_category: string | null;
           p_tags: string[] | null; p_payer: string | null; p_status: string | null; p_asset: string | null;

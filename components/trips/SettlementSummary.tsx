@@ -30,7 +30,7 @@ import { Money as MoneyDisplay } from "@/components/ui/Money";
 import { WalletAddressBadge } from "@/components/ui/WalletAddressBadge";
 import { Money } from "@/lib/money";
 import { useSettlementProposal } from "@/hooks/useSettlementProposal";
-import { proposalPaymentGate, type ProposalPaymentGate } from "@/lib/settlement/proposal";
+import { disputeKey, proposalPaymentGate, type ProposalPaymentGate } from "@/lib/settlement/proposal";
 import { SettlementProposalPanel } from "@/components/trips/SettlementProposalPanel";
 
 interface SettlementSummaryProps {
@@ -44,12 +44,12 @@ type RowState =
   | { status: "paying" }
   | { status: "done"; txHash: string };
 
-function deriveRawDebts(expenses: Expense[]): RawDebt[] {
+function deriveRawDebts(expenses: Expense[], disputedShares: ReadonlySet<string> = new Set()): RawDebt[] {
   const debts: RawDebt[] = [];
   for (const expense of expenses) {
     for (const share of expense.shares) {
       const payer = expense.members.find((m) => m.id === expense.paidByMemberId);
-      if (!payer || share.memberId === expense.paidByMemberId) continue;
+      if (!payer || share.memberId === expense.paidByMemberId || disputedShares.has(disputeKey(expense.id, share.memberId))) continue;
       // A partly paid share (#325) still owes its remaining balance, and only
       // that: never the original amount, and never "settled" until it is zero.
       const balance = shareBalance(share);
@@ -328,9 +328,9 @@ function NetPaymentRow({
 }
 
 export function SettlementSummary({ trip, expenses, onChainEvents = [] }: SettlementSummaryProps) {
-  const rawDebts    = useMemo(() => deriveRawDebts(expenses), [expenses]);
-  const netPayments = useMemo(() => computeNetPayments(rawDebts), [rawDebts]);
   const proposalState = useSettlementProposal(trip, expenses);
+  const rawDebts    = useMemo(() => deriveRawDebts(expenses, proposalState.disputedShares), [expenses, proposalState.disputedShares]);
+  const netPayments = useMemo(() => computeNetPayments(rawDebts), [rawDebts]);
 
   const onChainPaymentKeys = useMemo(
     () => new Set(onChainEvents.map(buildPaymentEventKey)),
@@ -343,19 +343,28 @@ export function SettlementSummary({ trip, expenses, onChainEvents = [] }: Settle
       return key ? onChainPaymentKeys.has(key) : false;
     });
 
+  if (!proposalState.disputesReady) {
+    return <div role="status" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+      Settlement is paused while dispute status is unavailable. Refresh the trip or reconnect to load the protected balance state.
+    </div>;
+  }
+
   if (netPayments.length === 0) {
     return (
-      <div className="flex flex-col items-center gap-2 py-8 text-center rounded-xl border border-dashed border-[#D0D0D0]">
-        <Scale size={20} className="text-[#2DD4BF]" />
-        <p className="text-sm font-semibold text-[#0F0F14]">All settled up!</p>
-        <p className="text-xs text-[#AAA]">No outstanding balances in this trip.</p>
+      <div className="space-y-3">
+        <SettlementProposalPanel state={proposalState} hasOutstanding={false} expenses={expenses} />
+        <div className="flex flex-col items-center gap-2 py-8 text-center rounded-xl border border-dashed border-[#D0D0D0]">
+          <Scale size={20} className="text-[#2DD4BF]" />
+          <p className="text-sm font-semibold text-[#0F0F14]">{proposalState.disputes.some((d) => d.status === "open" || d.status === "upheld") ? "No undisputed amount is ready to settle" : "All settled up!"}</p>
+          <p className="text-xs text-[#AAA]">{proposalState.disputes.some((d) => d.status === "open" || d.status === "upheld") ? "Open disputes are paused from fresh settlement proposals and payments." : "No outstanding balances in this trip."}</p>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="space-y-2">
-      <SettlementProposalPanel state={proposalState} hasOutstanding={netPayments.length > 0} />
+      <SettlementProposalPanel state={proposalState} hasOutstanding={netPayments.length > 0} expenses={expenses} />
 
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
