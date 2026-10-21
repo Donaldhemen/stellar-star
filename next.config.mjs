@@ -45,6 +45,10 @@ const nextConfig = {
             key: "Strict-Transport-Security",
             value: "max-age=63072000; includeSubDomains; preload",
           },
+          {
+            key: "Content-Security-Policy",
+            value: "default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://stellar.expert https://*.stellar.org; font-src 'self' data:; connect-src 'self' https://*.stellar.org https://*.supabase.co wss://*.supabase.co https://horizon.stellar.org https://horizon-testnet.stellar.org https://rpc.stellar.org https://soroban-testnet.stellar.org; frame-ancestors 'self';",
+          },
         ],
       },
     ];
