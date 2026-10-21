@@ -65,6 +65,7 @@ export default function TripsPage() {
     useTripSearch(searchQuery);
   const { expenses } = useExpense();
   const { publicKey } = useWallet();
+  const { contacts } = useContacts();
   const { user } = useAuth();
   const { success: toastSuccess, error: toastError } = useToast();
   const [showForm, setShowForm] = useState(false);

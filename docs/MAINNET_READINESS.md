@@ -17,8 +17,8 @@ checks pass and receive documented approval.
 | **Gate ID** | `GATE-2026-Q4-MAINNET-01` |
 | **Target Release** | `v1.0.0-mainnet` |
 | **Network Target** | Stellar Public Global Network (`PUBLIC`) |
-| **Evaluation Date** | `2026-10-19` |
-| **Review Expiry Date** | `2026-11-19` (Monthly recurring audit cycle) |
+| **Evaluation Date** | 2026-10-19 |
+| **Review Expiry Date** | 2026-11-19 (Monthly recurring audit cycle) |
 | **Gate Decision** | **GO** |
 | **Enforcement Policy** | **FAIL-CLOSED** (Any failed or expired P0 item blocks production deployment in CI) |
 

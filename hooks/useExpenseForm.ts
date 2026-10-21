@@ -3,6 +3,8 @@
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useToast } from "@/components/ui/Toast";
 import { useExpense } from "@/hooks/useExpense";
+import { useLocale } from "@/context/LocaleContext";
+import { parseLocaleAmount } from "@/lib/i18n/parseAmount";
 import {
   calculateSplit,
   findDuplicateWalletErrors,
@@ -24,6 +26,7 @@ import {
 import { Money } from "@/lib/money";
 import { isExpenseCategory, type ExpenseCategory } from "@/lib/expense/categories";
 import { parseTagInput, validateTags } from "@/lib/expense/tags";
+import { trackAnalyticsEvent } from "@/lib/analytics/sink";
 
 /** Prefill for the form, e.g. from a trip's recurring expense rule. */
 export interface ExpenseFormInitialValues {
@@ -55,6 +58,8 @@ async function lockQuote(currency: string): Promise<LockedQuote | null> {
 }
 
 export interface UseExpenseFormOptions {
+  /** Optional review gate for receipt-assisted drafts. */
+  beforeCreate?: () => boolean | Promise<boolean>;
   onSuccess?: (expenseId?: string) => void;
   currentUserPublicKey?: string | null;
   currentUserName?: string | null;
@@ -81,6 +86,7 @@ interface ExpenseFormValidationInput {
   members: Member[];
   /** Normalized tags; optional so existing callers keep validating as before. */
   tags?: string[];
+  locale?: string;
 }
 
 export function blankExpenseMember(): Member {
@@ -93,6 +99,7 @@ export function validateExpenseFormFields({
   currency,
   members,
   tags = [],
+  locale = "en-US",
 }: ExpenseFormValidationInput): Record<string, string> {
   const errors: Record<string, string> = {};
 
@@ -101,7 +108,7 @@ export function validateExpenseFormFields({
   const tagError = validateTags(tags);
   if (tagError) errors.tags = tagError;
 
-  const amountError = validateAmount(totalAmount, currency);
+  const amountError = validateAmount(totalAmount, currency, locale);
   if (amountError) {
     errors.totalAmount = amountError;
   }
@@ -132,6 +139,7 @@ export function validateExpenseFormFields({
 
 
 export function useExpenseForm({
+  beforeCreate,
   onSuccess,
   currentUserPublicKey,
   currentUserName,
@@ -140,6 +148,7 @@ export function useExpenseForm({
 }: UseExpenseFormOptions) {
   const { addExpense } = useExpense();
   const { success: toastSuccess, error: toastError } = useToast();
+  const { locale } = useLocale();
   const initialMembersRef = useRef<Member[] | null>(null);
 
   if (!initialMembersRef.current) {
@@ -160,6 +169,7 @@ export function useExpenseForm({
       : initialMembersRef.current![0]?.id ?? "",
   );
   const [submitting, setSubmitting] = useState(false);
+  const saveInFlight = useRef(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   // ── Locked FX quote (#323) ────────────────────────────────────────────────
@@ -217,7 +227,11 @@ export function useExpenseForm({
     failed: quoteFailed,
     now,
   });
-  const settlementPreview = settlementAmountFor(totalAmount, currency, quote, currentQuoteState);
+  const canonicalTotalAmount = useMemo(() => {
+    const parsed = parseLocaleAmount(totalAmount, locale);
+    return parsed.canonicalAmount ?? totalAmount;
+  }, [totalAmount, locale]);
+  const settlementPreview = settlementAmountFor(canonicalTotalAmount, currency, quote, currentQuoteState);
   /**
    * True when the FX service could not price the chosen currency. The form
    * stays filled in so the user can switch to XLM — an outage at a third
@@ -259,18 +273,21 @@ export function useExpenseForm({
   };
 
   const validate = useCallback(() => {
-    const nextErrors = validateExpenseFormFields({ title, totalAmount, currency, members, tags });
+    const nextErrors = validateExpenseFormFields({ title, totalAmount, currency, members, tags, locale });
     setErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
-  }, [title, totalAmount, currency, members, tags]);
+  }, [title, totalAmount, currency, members, tags, locale]);
 
   const handleSubmit = useCallback(
     async (event: FormEvent) => {
       event.preventDefault();
+      if (saveInFlight.current) return;
       if (!validate()) return;
 
+      saveInFlight.current = true;
       setSubmitting(true);
       try {
+        if (beforeCreate && !(await beforeCreate())) return;
         const cleanMembers = members.map((member) => ({
           ...member,
           name: member.name.trim(),
@@ -297,7 +314,9 @@ export function useExpenseForm({
           return;
         }
 
-        const provenance = buildProvenance(totalAmount, currency, locked, state);
+        const parsedTotal = parseLocaleAmount(totalAmount, locale);
+        const canonicalAmount = parsedTotal.canonicalAmount ?? totalAmount;
+        const provenance = buildProvenance(canonicalAmount, currency, locked, state);
         if (!provenance) {
           setErrors((previous) => ({ ...previous, totalAmount: "Enter a valid amount." }));
           return;
@@ -322,6 +341,8 @@ export function useExpenseForm({
           exchangeRateTimestamp: provenance.exchangeRateTimestamp,
           exchangeRateSource: provenance.exchangeRateSource,
           settlementAsset: provenance.settlementAsset,
+          category: category || null,
+          tags,
           splitMode,
           paidByMemberId,
           members: cleanMembers,
@@ -331,6 +352,12 @@ export function useExpenseForm({
         };
 
         await addExpense(expense);
+        trackAnalyticsEvent("expense_created", {
+          currency: currency.toUpperCase(),
+          split_mode: splitMode,
+          member_count: cleanMembers.length,
+          has_receipt: false,
+        });
         toastSuccess("Expense created!", `"${expense.title}" split among ${cleanMembers.length} members.`);
         onSuccess?.(expense.id);
       } catch (err: unknown) {
@@ -343,6 +370,7 @@ export function useExpenseForm({
           toastError("Error", raw);
         }
       } finally {
+        saveInFlight.current = false;
         setSubmitting(false);
       }
     },
@@ -353,6 +381,7 @@ export function useExpenseForm({
     // entirely and persisted the typed amount tagged XLM.
     [
       addExpense,
+      beforeCreate,
       category,
       currency,
       description,

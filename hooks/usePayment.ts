@@ -47,7 +47,14 @@ import {
   reconcilePendingIntentsForWallet,
 } from "@/lib/settlement/reconcile";
 import { validateAmount } from "@/lib/expense/validation";
+import { planInstallment } from "@/lib/settlement/installments";
+import {
+  fetchExpenseById,
+  updateInstallmentProofRow,
+  InstallmentRejectedError,
+} from "@/lib/supabase/queries";
 import type { SplitShare } from "@/types/expense";
+import { trackAnalyticsEvent } from "@/lib/analytics/sink";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -75,6 +82,11 @@ interface PayShareParams {
   expenseTitle: string;
   payerWalletAddress: string;
   tripId?: string;
+  /**
+   * Pay only part of the share (#325). Omitted means "pay the remaining
+   * balance"; anything above the remaining balance is rejected before signing.
+   */
+  amount?: string;
 }
 
 // Re-export so consumers can import the type from the hook module directly.
@@ -86,7 +98,7 @@ export type { PendingOnChainRecord };
 
 export function usePayment({ expenseId }: UsePaymentOpts) {
   const { publicKey, refreshBalance, network } = useWallet();
-  const { markSharePaid } = useExpense();
+  const { markSharePaid, recordShareInstallment } = useExpense();
   const { success: toastSuccess, error: toastError, info: toastInfo } = useToast();
   const { locale } = useLocale();
 
@@ -126,6 +138,7 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
       amountXlm: string,
       tripId: string,
       memoText: string,
+      installment?: { claimId: string; memberId: string; seq: number },
     ) => {
       if (!publicKey) return;
       const record: PendingOnChainRecord = {
@@ -137,6 +150,9 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
         memoText,
         txHash,
         ledger,
+        ...(installment
+          ? { claimId: installment.claimId, memberId: installment.memberId, installmentSeq: installment.seq }
+          : {}),
       };
       persistPendingOnChain(record);
     },
@@ -295,7 +311,9 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
 
     // The oracle re-verifies against Horizon itself; there is no point doing a
     // client-side check first, and its verdict would carry no weight anyway.
-    const attested = await fetchAttestation({ ...pendingOnChain, requestId });
+    // Installments are attested and recorded under their own claim id (#325).
+    const claimExpenseId = pendingOnChain.claimId ?? pendingOnChain.expenseId;
+    const attested = await fetchAttestation({ ...pendingOnChain, expenseId: claimExpenseId, requestId });
 
     if (!attested.ok) {
       reportError(
@@ -327,6 +345,7 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
 
     const contractResult = await recordPaymentOnChain({
       ...pendingOnChain,
+      expenseId: claimExpenseId,
       requestId,
       attestation: attested.attestation,
       onStatus: (step) => setPaymentState({ status: "recording", step }),
@@ -357,6 +376,15 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
       return;
     }
 
+    if (pendingOnChain.claimId && pendingOnChain.memberId) {
+      updateInstallmentProofRow(pendingOnChain.expenseId, pendingOnChain.memberId, pendingOnChain.txHash, {
+        verified: true,
+        onChain: true,
+        attestationNonce: attested.attestation.claim.nonce,
+        ledger: contractResult.ledger ?? pendingOnChain.ledger,
+      }).catch(() => {});
+    }
+
     // Success — wipe persisted record so it doesn't reappear after refresh.
     clearPersistedPendingOnChain();
     setPaymentState({
@@ -374,7 +402,7 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
   // ---------------------------------------------------------------------------
 
   const payShare = useCallback(
-    async ({ share, expenseTitle, payerWalletAddress, tripId }: PayShareParams) => {
+    async ({ share: givenShare, expenseTitle, payerWalletAddress, tripId, amount }: PayShareParams) => {
       const requestId = createRequestId();
 
       if (!publicKey) {
@@ -382,7 +410,36 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
         return;
       }
 
-      const amountError = validateAmount(share.amount, "XLM");
+      // Plan against the freshest share we can read, so a payment made from
+      // another device since this page loaded is counted before anything is
+      // signed. The RPC re-checks at write time either way.
+      let share = givenShare;
+      try {
+        const fresh = await fetchExpenseById(expenseId);
+        const freshShare = fresh?.shares.find((s) => s.memberId === givenShare.memberId);
+        if (freshShare) share = { ...givenShare, ...freshShare };
+      } catch {
+        // Offline or no session: fall back to the share we were given.
+      }
+
+      const plan = planInstallment(share, expenseId, amount);
+      if (!plan.ok) {
+        if (plan.code === "ALREADY_SETTLED") {
+          toastError("Already settled", plan.message);
+        } else {
+          setPaymentState({ status: "blocked", message: plan.message });
+          toastError(plan.code === "OVERPAYMENT" ? "Overpayment not allowed" : "Invalid payment amount", plan.message);
+        }
+        return;
+      }
+      // The single-payment path keeps the share's own amount string exactly.
+      const payAmount = plan.isInstallment ? plan.amount : share.amount;
+      const claimExpenseId = plan.claimId ?? expenseId;
+      const installment = plan.isInstallment
+        ? { claimId: claimExpenseId, memberId: share.memberId, seq: plan.seq }
+        : undefined;
+
+      const amountError = validateAmount(payAmount, "XLM");
       if (amountError) {
         toastError("Invalid payment amount", amountError);
         return;
@@ -417,7 +474,7 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
           new Error(mismatchMsg),
           {
             stage: "payShare",
-            amount: share.amount,
+            amount: payAmount,
             walletNetwork: network,
             appNetwork: STELLAR_NETWORK,
           },
@@ -441,11 +498,13 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
 
       // Pre-flight 1: check if already settled on-chain before building the TX
       if (CONTRACT_ID && share.walletAddress) {
-        const alreadyPaid = await checkIsPaid(publicKey, expenseId, share.walletAddress);
+        const alreadyPaid = await checkIsPaid(publicKey, claimExpenseId, share.walletAddress);
         if (alreadyPaid.paid) {
           toastError(
             "Already settled on-chain",
-            "This payment was already recorded on Stellar. No action needed.",
+            plan.isInstallment
+              ? `Installment #${plan.seq} was already recorded on Stellar. Refresh to see the updated balance.`
+              : "This payment was already recorded on Stellar. No action needed.",
           );
           return;
         }
@@ -461,13 +520,19 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
           memberId: share.memberId,
           payerWallet: payerWalletAddress,
           memberWallet: publicKey,
-          amount: share.amount,
+          amount: payAmount,
           txHash: pendingOnChain?.txHash,
+          ...(plan.isInstallment ? { installmentSeq: plan.seq } : {}),
         });
 
         if (!intentResult.ok) {
           if (intentResult.code === "ALREADY_RECORDED") {
-            toastError("Already settled on-chain", intentResult.message);
+            toastError(
+              "Already settled on-chain",
+              plan.isInstallment
+                ? `Installment #${plan.seq} was already recorded. Refresh to see the remaining balance.`
+                : intentResult.message,
+            );
             return;
           }
           if (intentResult.code === "SUBMITTED_NEEDS_RECONCILIATION") {
@@ -486,6 +551,14 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
               toastSuccess("Settlement reconciled", "Share marked paid from on-chain proof.");
               return;
             }
+            // Money already moved for this share; paying again without a lock
+            // could double-pay it. Wait for reconciliation to converge instead.
+            const msg =
+              recon.message ??
+              "A previous payment for this share is still being confirmed on Stellar. Try again shortly.";
+            setPaymentState({ status: "blocked", message: msg });
+            toastError("Previous payment still confirming", msg);
+            return;
           }
           if (intentResult.code === "IN_PROGRESS") {
             setPaymentState({ status: "blocked", message: intentResult.message });
@@ -507,7 +580,7 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
 
       try {
         if (CONTRACT_ID && tripId) {
-          const poolCheck = await precheckPoolBalance(publicKey, publicKey, share.amount);
+          const poolCheck = await precheckPoolBalance(publicKey, publicKey, payAmount);
           if (!poolCheck.ok) {
             const msg =
               poolCheck.error ?? "Add enough pool credit before sending this payment.";
@@ -519,12 +592,21 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
           }
         }
 
+        const startTime = Date.now();
+        trackAnalyticsEvent("payment_started", {
+          currency: "XLM",
+          on_chain: Boolean(CONTRACT_ID && tripId),
+        });
+
         setPaymentState({ status: "building" });
-        const memoText = `${expenseTitle}|${share.name}`;
+        // The sequence leads so it survives the 28-byte memo trim.
+        const memoText = plan.isInstallment
+          ? `#${plan.seq}|${expenseTitle}|${share.name}`
+          : `${expenseTitle}|${share.name}`;
         const { xdr } = await buildPaymentTransaction({
           sourcePublicKey:      publicKey,
           destinationPublicKey: payerWalletAddress,
-          amount:               share.amount,
+          amount:               payAmount,
           memoText,
         });
 
@@ -551,11 +633,12 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
               memberId: share.memberId,
               payerWallet: payerWalletAddress,
               memberWallet: publicKey,
-              amount: share.amount,
+              amount: payAmount,
               currency: "XLM",
               status: "submitted",
               txHash: result.hash,
               ledger: result.ledger,
+              ...(plan.isInstallment ? { installmentSeq: plan.seq } : {}),
             });
           } catch (err) {
             console.warn("[usePayment] Failed to upsert intent on submit:", err);
@@ -565,6 +648,7 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
         let onChain = false;
         let onChainError: string | null = null;
         let finalLedger = result.ledger;
+        let attestationNonce: string | null = null;
 
         if (CONTRACT_ID && tripId) {
           setPaymentState({ status: "recording", step: "simulating" });
@@ -574,10 +658,10 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
           const attested = await fetchAttestation({
             requestId,
             tripId,
-            expenseId,
+            expenseId: claimExpenseId,
             payerPublicKey: payerWalletAddress,
             memberPublicKey: publicKey,
-            amountXlm: share.amount,
+            amountXlm: payAmount,
             txHash: result.hash,
           });
 
@@ -596,15 +680,16 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
               "error",
               requestId,
             );
-            buildAndPersistPending(result.hash, result.ledger, payerWalletAddress, share.amount, tripId, memoText);
+            buildAndPersistPending(result.hash, result.ledger, payerWalletAddress, payAmount, tripId, memoText, installment);
           } else {
+            attestationNonce = attested.attestation.claim.nonce;
             const contractResult = await recordPaymentOnChain({
               requestId,
               memberPublicKey: publicKey,
               tripId,
-              expenseId,
+              expenseId:      claimExpenseId,
               payerPublicKey: payerWalletAddress,
-              amountXlm:      share.amount,
+              amountXlm:      payAmount,
               txHash:         result.hash,
               attestation:    attested.attestation,
               onStatus:       (step) => setPaymentState({ status: "recording", step }),
@@ -628,13 +713,49 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
                 "error",
                 requestId,
               );
-              buildAndPersistPending(result.hash, result.ledger, payerWalletAddress, share.amount, tripId, memoText);
+              buildAndPersistPending(result.hash, result.ledger, payerWalletAddress, payAmount, tripId, memoText, installment);
             }
           }
         }
 
         // Always sync local state after successful XLM transfer so UI reflects financial reality.
-        await markSharePaid(expenseId, share.memberId, result.hash);
+        if (plan.isInstallment) {
+          try {
+            await recordShareInstallment(expenseId, share.memberId, {
+              seq: plan.seq,
+              amount: payAmount,
+              txHash: result.hash,
+              claimId: claimExpenseId,
+              ledger: finalLedger,
+              attestationNonce,
+              verified: attestationNonce !== null,
+              onChain,
+            });
+          } catch (err) {
+            if (err instanceof InstallmentRejectedError) {
+              // Money has moved but the balance moved first: never record it as
+              // credit implicitly. Surface it so the payer can refund or credit.
+              const msg =
+                `The ${payAmount} XLM payment landed (TX ${result.hash.slice(0, 12)}...) but exceeds ` +
+                "this share's remaining balance, so it was not applied. Ask the recipient to refund " +
+                "or credit the difference.";
+              if (intent) markIntentFailed(intent.id, msg).catch(() => {});
+              setPaymentState({ status: "error", message: msg });
+              reportError(
+                "payment.installment-rejected",
+                err,
+                { stage: "payShare", tripId, expenseId, txHash: result.hash, reason: err.reason },
+                "error",
+                requestId,
+              );
+              toastError("Installment not applied", msg);
+              return;
+            }
+            throw err;
+          }
+        } else {
+          await markSharePaid(expenseId, share.memberId, result.hash);
+        }
 
         if (intent) {
           try {
@@ -643,6 +764,11 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
         }
 
         if (onChainError) {
+          trackAnalyticsEvent("payment_completed", {
+            currency: "XLM",
+            on_chain: false,
+            duration_ms: Date.now() - startTime,
+          });
           setPaymentState({
             status: "partial_success",
             hash: result.hash,
@@ -657,7 +783,7 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
               stage: "payShare",
               hash: result.hash,
               ledger: result.ledger,
-              amount: share.amount,
+              amount: payAmount,
               tripId,
             },
             "error",
@@ -672,9 +798,19 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
           return;
         }
 
+        trackAnalyticsEvent("payment_completed", {
+          currency: "XLM",
+          on_chain: onChain,
+          duration_ms: Date.now() - startTime,
+        });
+
         setPaymentState({ status: "success", hash: result.hash, ledger: finalLedger, onChain });
         toastSuccess(
-          `Paid ${parseFloat(share.amount).toFixed(4)} XLM to ${share.name}`,
+          plan.isInstallment
+            ? plan.isFinal
+              ? `Installment #${plan.seq} paid — share fully settled`
+              : `Installment #${plan.seq} paid · ${plan.remainingAfter} XLM remaining`
+            : `Paid ${parseFloat(share.amount).toFixed(4)} XLM to ${share.name}`,
           onChain
             ? `TX: ${result.hash.slice(0, 12)}... · Recorded on-chain (verified)`
             : `TX: ${result.hash.slice(0, 12)}...`,
@@ -687,13 +823,18 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
         const isRejected = /reject|denied|cancel/i.test(message.toLowerCase());
         const display    = isRejected ? "Transaction cancelled in wallet." : message;
 
+        trackAnalyticsEvent("payment_failed", {
+          currency: "XLM",
+          error_code: isRejected ? "user_rejected" : "payment_failed",
+        });
+
       setPaymentState({ status: "error", message: display });
       reportError(
         "payment.failed",
         err,
         {
           stage: "payShare",
-          amount: share.amount,
+          amount: payAmount,
           tripId,
         },
         "error",
@@ -706,6 +847,7 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
       publicKey,
       expenseId,
       markSharePaid,
+      recordShareInstallment,
       refreshBalance,
       toastSuccess,
       toastError,
